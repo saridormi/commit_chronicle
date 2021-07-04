@@ -1,0 +1,2 @@
+dpu-utils==0.4.0
+PyDriller==1.15.5
