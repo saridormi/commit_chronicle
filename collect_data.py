@@ -1,4 +1,5 @@
 import os
+import argparse
 import pydriller
 from typing import List
 from dpu_utils.utils import save_jsonl_gz
@@ -6,7 +7,7 @@ from joblib import Parallel, delayed, cpu_count
 from commit_processor import CommitProcessor
 
 
-def process_repo(commit_data_dir, repo_name, repo_url, file_types=['.java']):
+def process_repo(repos_dir, commit_data_dir, repo_name, repo_url, file_types):
     """
     Download author, date, diff and message of all .java-related commits
     and save to .jsonl.gz
@@ -20,12 +21,12 @@ def process_repo(commit_data_dir, repo_name, repo_url, file_types=['.java']):
         return
 
     # do not clone repos that are already cloned
-    if repo_name.split('_')[1] in os.listdir('temp'):
-        repo = pydriller.RepositoryMining(f'temp/{repo_name.split("_")[1]}', only_no_merge=True,
+    if repo_name.split('_')[1] in os.listdir(repos_dir):
+        repo = pydriller.RepositoryMining(f'{repos_dir}/{repo_name.split("_")[1]}', only_no_merge=True,
                                           only_modifications_with_file_types=file_types)
     else:
         try:
-            repo = pydriller.RepositoryMining(repo_url, clone_repo_to='temp', only_no_merge=True,
+            repo = pydriller.RepositoryMining(repo_url, clone_repo_to=repos_dir, only_no_merge=True,
                                               only_modifications_with_file_types=file_types)
         except:  # sometimes git errors can happen during cloning
             return
@@ -62,16 +63,30 @@ def filter_msg(msg: str, min_len=1) -> bool:
 
 
 if __name__ == '__main__':
-    commit_data_dir = 'extracted_data'
-    repos_urls_file = 'repos_urls.txt'
-    repos_names_file = 'repos_names.txt'
+    parser = argparse.ArgumentParser(description='This script collects commit data from provided list of GitHub repos.',
+                                     formatter_class=argparse.ArgumentDefaultsHelpFormatter)
+    parser.add_argument('--repos_dir', type=str, default='temp',
+                        help='path to directory to clone repos to')
+    parser.add_argument('--commit_data_dir', type=str, default='extracted_data',
+                        help='path to directory to save collected commit data')
+    parser.add_argument('--repos_urls_file', type=str, default='repos_urls.txt',
+                        help='path to file with repos urls')
+    parser.add_argument('--repos_names_file', type=str, default='repos_names.txt',
+                        help='path to file with repos names')
+    parser.add_argument('--file_types', type=List[str], default=['.java'],
+                        help='only analyses commits in which at least one modification was done in provided file types')
+    args = parser.parse_args()
 
-    with open(repos_urls_file, 'r') as file:
+    with open(args.repos_urls_file, 'r') as file:
         repo_urls_list = [line.strip() for line in file.readlines()]
 
-    with open(repos_names_file, 'r') as file:
+    with open(args.repos_names_file, 'r') as file:
         repo_names_list = [line.strip() for line in file.readlines()]
 
     with Parallel(cpu_count()) as pool:
-        pool(delayed(process_repo)(commit_data_dir, repo_name, repo_url)
+        pool(delayed(process_repo)(repos_dir=args.repos_dir,
+                                   commit_data_dir=args.commit_data_dir,
+                                   repo_name=repo_name,
+                                   repo_url=repo_url,
+                                   file_types=args.file_types)
              for repo_name, repo_url in zip(repo_names_list, repo_urls_list))
