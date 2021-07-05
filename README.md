@@ -1,6 +1,6 @@
 # Commits dataset
 
-> :heavy_exclamation_mark: **TODO:** license
+![GitHub](https://img.shields.io/github/license/saridormi/commits_dataset?style=for-the-badge)
 
 This repository contains code for collecting and filtering data about commits from open source GitHub repos.
 
