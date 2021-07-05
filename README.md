@@ -93,7 +93,7 @@ Follow these steps:
 
 3. **Choose repos to collect data from**
 
-    We used [GitHub Search](https://arxiv.org/abs/2103.04682) to select repositories that meet several criteria *(you can look through [`choosing_repos.ipynb`](https://github.com/saridormi/commits_dataset/blob/main/choosing_repos.ipynb) for more information on our specific criteria)*.
+    We used [GitHub Search](https://arxiv.org/abs/2103.04682) to select repositories that meet several criteria *(you can look through [`choosing_repos.ipynb`](https://github.com/saridormi/commits_dataset/blob/main/notebooks_and_filtering_code/choosing_repos.ipynb) for more information on our specific criteria)*.
 
     You can choose repositories however you like, just provide two files: with repos URLs *(e.g. `https://github.com/saridormi/commits_dataset.git`)* and with repos names *(or something that you want to be used to name directories)*.
     
