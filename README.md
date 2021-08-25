@@ -2,6 +2,8 @@
 
 ![GitHub](https://img.shields.io/github/license/saridormi/commits_dataset?style=for-the-badge)
 
+> :exclamation: work in progress
+
 This repository contains code for collecting and filtering data about commits from open source GitHub repos.
 
 ## Table of contents
@@ -79,21 +81,13 @@ Follow these steps:
 
 2. **Install dependencies**
 
-    For data collection you need Python 3.8 and several packages:
-    
-    * [PyDriller](https://github.com/ishepard/pydriller)
+    For data collection you need Python 3.8 and [PyDriller](https://github.com/ishepard/pydriller)
 
-      *(Note: latest version seems to differ a lot from the one I used, so make sure to install version from requirements)*
-    * [DPU Utilities](https://github.com/microsoft/dpu-utils)
-    
-    You can install these packages with [pip](https://pip.pypa.io/en/stable/):
-    ```
-    pip install -r requirements.txt
-    ```
+      *(Note: latest version seems to differ a lot from the one I used, so make sure to install `1.15.5`)*
 
 3. **Choose repos to collect data from**
 
-    We used [GitHub Search](https://arxiv.org/abs/2103.04682) to select repositories that meet several criteria *(you can look through [`choosing_repos.ipynb`](https://github.com/saridormi/commits_dataset/blob/main/notebooks_and_filtering_code/choosing_repos.ipynb) for more information on our specific criteria)*.
+    We used [GitHub Search](https://arxiv.org/abs/2103.04682) to select repositories that meet several criteria *(you can look through `choosing_repos.ipynb` for any language in `notebooks` folder for more information on our specific criteria)*.
 
     You can choose repositories however you like, just provide two files: with repos URLs *(e.g. `https://github.com/saridormi/commits_dataset.git`)* and with repos names *(or something that you want to be used to name directories)*.
     
@@ -104,8 +98,3 @@ Follow these steps:
     python collect_data.py
     ```
     You can (and most likely should) use several command line arguments, add `-h` flag to command above to see more information.
-
-## Description of data filtering process
-
-> **TODO:** I think it might be useful, so most likely I'll write it later :innocent:
-
