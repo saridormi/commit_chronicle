@@ -3,7 +3,6 @@ import argparse
 import os
 import hashlib
 import logging
-import gzip
 import pandas as pd
 from typing import List, Tuple
 from collections import Counter
@@ -27,7 +26,7 @@ class DeduplicationPreprocessor:
         We don't want to consider filenames when running duplicates search on diffs.
 
         This method removes all filename patterns:
-        * path/to/file.py                              - when file is modified
+        * path/to/file.smth                            - when file is modified
         (this case is parsed with more complex and error-prone regex)
         * rename from filename1 \n rename to filename2 - when file is renamed
         * copy from filename1 \n copy to filename2     - when file is copied
@@ -96,9 +95,9 @@ class DeduplicationPreprocessor:
 
     def preprocess(self, csv_filename: str, chunksize: int, output_dir: str, diff_mode: bool):
         """
-        Processes each example in 'csv_filename' (iterating in chunks of 'chunksize') to format
+        Processes each example in 'input_filename' (iterating in chunks of 'chunksize') to format
         'project_id,file_id,total_tokens,unique_tokens,token_hash@#@token1@@::@@frequency,token2@@::@@frequency,...'
-        and saves result to 'output_dir'
+        and saves result to 'n_tokens_dir'
         'diff_mode' = True -> processes diffs (in 'diff' column),
         otherwise -> processes messages (in 'message' column)
         """
@@ -109,25 +108,17 @@ class DeduplicationPreprocessor:
 
         logging.info(f"[{data_col}] Starting processing")
 
-        reader = pd.read_csv(csv_filename, chunksize=chunksize, index_col="id")
+        reader = pd.read_csv(csv_filename, chunksize=chunksize)
         for chunk in tqdm(reader, total=2846334 // chunksize + 1):
 
             with Parallel(8) as pool:
                 res = pool(
-                    delayed(self.preprocess_single_example)(item=item, id=id, diff_mode=diff_mode)
-                    for id, item in chunk[data_col].items()
+                    delayed(self.preprocess_single_example)(item=item[data_col], id=item["id"], diff_mode=diff_mode)
+                    for _, item in chunk[["id", data_col]].iterrows()
                 )
 
             with open(os.path.join(output_dir, f"res_{data_col}.txt"), "a", encoding="utf-8") as target:
                 target.writelines(res)
-
-        logging.info(f"[{data_col}] Compressing with gzip")
-
-        with open(os.path.join(output_dir, f"res_{data_col}.txt"), "rb") as f_in, gzip.open(
-            os.path.join(output_dir, f"res_{data_col}.txt.gz"), "wb"
-        ) as f_out:
-            f_out.writelines(f_in)
-        os.remove(os.path.join(output_dir, f"res_{data_col}.txt"))
 
         logging.info(f"[{data_col}] Finished processing")
 
@@ -143,7 +134,7 @@ if __name__ == "__main__":
         default="../deduplication",
         help="path to directory to save processed data",
     )
-    parser.add_argument("--csv_filename", type=str, default="../commits_fxd.csv", help="path to .csv file with data")
+    parser.add_argument("--input_filename", type=str, default="../commits_fxd.csv", help="path to .csv file with data")
     parser.add_argument("--diff_mode", type=bool, help="`True` to process diffs and `False` to process messages")
     parser.add_argument("--chunksize", type=int, default=1000, help="# of examples to process at one step")
     args = parser.parse_args()

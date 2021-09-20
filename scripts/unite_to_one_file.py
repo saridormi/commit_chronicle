@@ -44,7 +44,8 @@ def unite_to_one_file(commit_data_dir, csv_filename, chunksize):
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(
-        description="This script processes collected commit data into single .csv file and ensures that each example has an unique id.",
+        description="This script processes collected commit data into single .csv file "
+                    "and ensures that each example has an unique id.",
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
     )
     parser.add_argument(
@@ -54,7 +55,7 @@ if __name__ == "__main__":
         help="path to directory with collected commit data",
     )
     parser.add_argument(
-        "--csv_filename", type=str, default="../commits_fxd.csv", help="path for creating new file with all commit data"
+        "--input_filename", type=str, default="../commits.csv", help="path for creating new file with all commit data"
     )
     parser.add_argument("--chunksize", type=int, default=1000, help="# of examples to process at one step")
     args = parser.parse_args()
