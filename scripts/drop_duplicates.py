@@ -45,20 +45,27 @@ if __name__ == "__main__":
         description="This script drops duplicates",
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
     )
-    parser.add_argument("--input_filename", type=str, default="../commits_no_diff_dup.csv", help="path to read .csv file with data")
+    parser.add_argument(
+        "--input_filename", type=str, default="../commits_no_diff_dup.csv", help="path to read .csv file with data"
+    )
     parser.add_argument(
         "--duplicates_filename",
         type=str,
         default="../deduplication/results_messages_100_new.pairs",
         help="path to file with duplicates ids",
     )
-    parser.add_argument("--n_tokens_dir", type=str,
-                        default="../commits_no_dup.csv",
-                        help="path to save .csv file with data without duplicates")
+    parser.add_argument(
+        "--n_tokens_dir",
+        type=str,
+        default="../commits_no_dup.csv",
+        help="path to save .csv file with data without duplicates",
+    )
     parser.add_argument("--chunksize", type=int, default=1000, help="# of examples to process at one step")
     args = parser.parse_args()
 
-    drop_duplicates(csv_filename=args.csv_filename,
-                    duplicates_filename=args.duplicates_filename,
-                    output_filename=args.output_filename,
-                    chunksize=args.chunksize)
+    drop_duplicates(
+        csv_filename=args.csv_filename,
+        duplicates_filename=args.duplicates_filename,
+        output_filename=args.output_filename,
+        chunksize=args.chunksize,
+    )

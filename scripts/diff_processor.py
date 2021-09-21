@@ -9,6 +9,7 @@ class DiffProcessor:
     """
     Class to remove unchanged lines from diffs.
     """
+
     @staticmethod
     def _process_single_diff(idx: int, diff: str) -> Tuple[int, str]:
         """
@@ -17,7 +18,7 @@ class DiffProcessor:
             - removing some unnecessary special info
             - removing non-changed lines
         """
-        diff_lines = diff.split('\n')
+        diff_lines = diff.split("\n")
         processed_lines = []
 
         for line in diff_lines:
@@ -69,10 +70,7 @@ class DiffProcessor:
     @staticmethod
     def _process_diffs(ids: List[int], diffs: List[str]) -> Dict[int, str]:
         with Parallel(16) as pool:
-            diff_res = pool(
-                delayed(DiffProcessor._process_single_diff)(idx, diff)
-                for idx, diff in zip(ids, diffs)
-            )
+            diff_res = pool(delayed(DiffProcessor._process_single_diff)(idx, diff) for idx, diff in zip(ids, diffs))
         return {idx: diff for idx, diff in diff_res}
 
     @staticmethod
@@ -81,7 +79,8 @@ class DiffProcessor:
         df["diff"] = pd.Series(DiffProcessor._process_diffs(df["id"].tolist(), df["diff"].tolist()))
         df = df.dropna()
         df[["id", "author", "date", "hash", "message", "diff", "repo"]].to_csv(
-            output_filename, index=False, header=True)
+            output_filename, index=False, header=True
+        )
 
 
 if __name__ == "__main__":
@@ -89,10 +88,9 @@ if __name__ == "__main__":
         description="This script removes unchanged lines from diffs.",
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
     )
-    parser.add_argument("--input_filename",
-                        type=str,
-                        default="../filtered_commits.csv",
-                        help="path to .csv file with data")
+    parser.add_argument(
+        "--input_filename", type=str, default="../filtered_commits.csv", help="path to .csv file with data"
+    )
     parser.add_argument(
         "--output_filename",
         type=str,

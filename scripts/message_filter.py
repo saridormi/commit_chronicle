@@ -15,6 +15,7 @@ class MessageFilter:
     Reused some regexes from https://github.com/Tbabm/PRSummarizer
     Copyright (c) 2019 Zhongxin Liu
     """
+
     @staticmethod
     def _filter_emails(message: str) -> str:
         return re.sub(r"(?!:^|\s)[\w.-]*@(?=[a-z\d][^.]*\.)[a-z\d.-]*[^.]", "", message)
@@ -60,11 +61,19 @@ class MessageFilter:
             - `PiperOrigin-RevId: <some number>`
             - `BAZEL_VERSION_REV_ID: <some number>`
         """
-        x = re.sub(r"(signed[-| ]off[-| ]by|co[-| ]authored[-| ]by|also[-| ]by|reviewed[-| ]by|pulled[-| ]by).*?(\n|$)",
-                   "", message, flags=re.IGNORECASE)
+        x = re.sub(
+            r"(signed[-| ]off[-| ]by|co[-| ]authored[-| ]by|also[-| ]by|reviewed[-| ]by|pulled[-| ]by).*?(\n|$)",
+            "",
+            message,
+            flags=re.IGNORECASE,
+        )
         x = re.sub(r"Created by MOE:.*?\nMOE_MIGRATED_REVID=.*?($|\n)", "", x)
-        x = re.sub(r"(fbshipit-source-id|Differential Revision|Change-Id|PiperOrigin-RevId|BAZEL_VERSION_REV_ID).*?($|\n)",
-                   "", x, flags=re.IGNORECASE)
+        x = re.sub(
+            r"(fbshipit-source-id|Differential Revision|Change-Id|PiperOrigin-RevId|BAZEL_VERSION_REV_ID).*?($|\n)",
+            "",
+            x,
+            flags=re.IGNORECASE,
+        )
         x = re.sub(r"(BUG=|FIXED=)\d*?($|\n)", "", x)
         return x
 
@@ -112,8 +121,7 @@ class MessageFilter:
 
             with Parallel(8) as pool:
                 filtered_messages = pool(
-                    delayed(MessageFilter._filter)(id=id, message=item)
-                    for id, item in chunk["message"].items()
+                    delayed(MessageFilter._filter)(id=id, message=item) for id, item in chunk["message"].items()
                 )
 
             chunk["message"] = pd.Series({i: msg for i, msg in filtered_messages})
@@ -127,7 +135,8 @@ class MessageFilter:
             ascii_ids = [x for x in ascii_ids if x is not None]
             chunk = chunk.loc[ascii_ids]
             chunk[["id", "author", "date", "hash", "message", "diff", "repo"]].to_csv(
-                output_filename, mode="a", index=False, header=False)
+                output_filename, mode="a", index=False, header=False
+            )
 
         logging.info(f"Finished processing")
 
@@ -139,10 +148,8 @@ if __name__ == "__main__":
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
     )
     parser.add_argument(
-        "--input_filename",
-        type=str,
-        default="../commits_no_outliers_2048.csv",
-        help="path to .csv file with data")
+        "--input_filename", type=str, default="../commits_no_outliers_2048.csv", help="path to .csv file with data"
+    )
     parser.add_argument(
         "--output_filename",
         type=str,
@@ -152,4 +159,6 @@ if __name__ == "__main__":
     parser.add_argument("--chunksize", type=int, default=1000, help="# of examples to process at one step")
     args = parser.parse_args()
 
-    MessageFilter.filter(input_filename=args.input_filename, output_filename=args.output_filename, chunksize=args.chunksize)
+    MessageFilter.filter(
+        input_filename=args.input_filename, output_filename=args.output_filename, chunksize=args.chunksize
+    )

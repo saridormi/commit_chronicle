@@ -9,6 +9,7 @@ import numpy as np
 from tqdm import tqdm
 from typing import Optional
 from joblib import Parallel, delayed
+
 nltk.download("punkt")
 
 
@@ -18,10 +19,10 @@ class PercentileProcessor:
     and drops examples out of [lower_percentile, upper_percentile] range.
     There is also an option to drop examples with more tokens in diffs than specific `diff_upper_bound` value.
     """
-    def __init__(self,
-                 lower_percentile: float = 0.05,
-                 upper_percentile: float = 0.95,
-                 diff_upper_bound: Optional[int] = None):
+
+    def __init__(
+        self, lower_percentile: float = 0.05, upper_percentile: float = 0.95, diff_upper_bound: Optional[int] = None
+    ):
         self.lower_percentile = lower_percentile
         self.upper_percentile = upper_percentile
         self.diff_upper_bound = diff_upper_bound
@@ -57,11 +58,15 @@ class PercentileProcessor:
         for chunk in tqdm(reader):
             with Parallel(8) as pool:
                 # get # tokens in diffs from current chuck
-                diff_res = pool(delayed(PercentileProcessor._get_n_tokens_single_ex)
-                                (item["id"], item["diff"]) for _, item in chunk[["id", "diff"]].iterrows())
+                diff_res = pool(
+                    delayed(PercentileProcessor._get_n_tokens_single_ex)(item["id"], item["diff"])
+                    for _, item in chunk[["id", "diff"]].iterrows()
+                )
                 # get # tokens in messages from current chuck
-                message_res = pool(delayed(PercentileProcessor._get_n_tokens_single_ex)
-                                   (item["id"], item["message"]) for _, item in chunk[["id", "message"]].iterrows())
+                message_res = pool(
+                    delayed(PercentileProcessor._get_n_tokens_single_ex)(item["id"], item["message"])
+                    for _, item in chunk[["id", "message"]].iterrows()
+                )
             # append results from current chunk to target files
             with open(os.path.join(n_tokens_dir, "n_tokens_diff.txt"), "a", encoding="utf-8") as file:
                 file.writelines(diff_res)
@@ -118,14 +123,19 @@ class PercentileProcessor:
         with open(os.path.join(n_tokens_dir, "n_tokens_diff.txt"), "r") as file:
             for line in file:
                 id, n_tokens = line.strip().split(",")
-                if (int(n_tokens) < self._diff_percentiles[self.lower_percentile] or int(n_tokens) > self._diff_percentiles[self.upper_percentile]) \
-                        or (self.diff_upper_bound and int(n_tokens) > self.diff_upper_bound):
+                if (
+                    int(n_tokens) < self._diff_percentiles[self.lower_percentile]
+                    or int(n_tokens) > self._diff_percentiles[self.upper_percentile]
+                ) or (self.diff_upper_bound and int(n_tokens) > self.diff_upper_bound):
                     self._ids_to_drop.add(id)
 
         with open(os.path.join(n_tokens_dir, "n_tokens_message.txt"), "r") as file:
             for line in file:
                 id, n_tokens = line.strip().split(",")
-                if int(n_tokens) < self._message_percentiles[self.lower_percentile] or int(n_tokens) > self._message_percentiles[self.upper_percentile]:
+                if (
+                    int(n_tokens) < self._message_percentiles[self.lower_percentile]
+                    or int(n_tokens) > self._message_percentiles[self.upper_percentile]
+                ):
                     self._ids_to_drop.add(id)
 
     def _drop_ids(self, input_filename: str, output_filename: str, chunksize: int):
@@ -170,11 +180,8 @@ if __name__ == "__main__":
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
     )
     parser.add_argument(
-        "--input_filename",
-        type=str,
-        nargs=1,
-        default="../commits_no_dup.csv",
-        help="path to read .csv file with data")
+        "--input_filename", type=str, nargs=1, default="../commits_no_dup.csv", help="path to read .csv file with data"
+    )
     parser.add_argument(
         "--output_filename",
         type=str,
@@ -189,31 +196,30 @@ if __name__ == "__main__":
         default="../percentile",
         help="path to directory to save processed data",
     )
-    parser.add_argument("--chunksize",
-                        type=int,
-                        nargs=1,
-                        default=1000,
-                        help="# of examples to process at one step")
-    parser.add_argument("--lower_percentile",
-                        type=float,
-                        nargs="?",
-                        default=0.05,
-                        help="lower percentile for # tokens in diffs and messages")
-    parser.add_argument("--upper_percentile",
-                        type=float,
-                        nargs="?",
-                        default=0.95,
-                        help="upper percentile for # tokens in diffs and messages")
-    parser.add_argument("--diff_upper_bound",
-                        type=int,
-                        nargs="?",
-                        help="specific upper bound for # tokens in diffs")
+    parser.add_argument("--chunksize", type=int, nargs=1, default=1000, help="# of examples to process at one step")
+    parser.add_argument(
+        "--lower_percentile",
+        type=float,
+        nargs="?",
+        default=0.05,
+        help="lower percentile for # tokens in diffs and messages",
+    )
+    parser.add_argument(
+        "--upper_percentile",
+        type=float,
+        nargs="?",
+        default=0.95,
+        help="upper percentile for # tokens in diffs and messages",
+    )
+    parser.add_argument("--diff_upper_bound", type=int, nargs="?", help="specific upper bound for # tokens in diffs")
     args = parser.parse_args()
 
-    processor = PercentileProcessor(lower_percentile=args.lower_percentile,
-                                    upper_percentile=args.upper_percentile,
-                                    diff_upper_bound=2048)
-    processor(input_filename=args.input_filename,
-              n_tokens_dir=args.n_tokens_dir,
-              output_filename=args.output_filename,
-              chunksize=args.chunksize)
+    processor = PercentileProcessor(
+        lower_percentile=args.lower_percentile, upper_percentile=args.upper_percentile, diff_upper_bound=2048
+    )
+    processor(
+        input_filename=args.input_filename,
+        n_tokens_dir=args.n_tokens_dir,
+        output_filename=args.output_filename,
+        chunksize=args.chunksize,
+    )
