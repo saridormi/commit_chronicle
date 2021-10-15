@@ -7,7 +7,6 @@ from tqdm import tqdm
 from collections import defaultdict
 from typing import List
 from sklearn.preprocessing import LabelEncoder
-from sklearn.model_selection import train_test_split
 from transformers import AutoTokenizer
 
 
@@ -17,45 +16,6 @@ class TrainingProcessor:
         self._test_and_val_authors = set()
         self._diff_tok = AutoTokenizer.from_pretrained(diff_tokenizer_name_or_path)
         self._msg_tok = AutoTokenizer.from_pretrained(msg_tokenizer_name_or_path)
-
-    def _split_by_repos(self, input_filename: str, output_dir: str):
-        df = pd.read_csv(input_filename)
-        # sort by author and date
-        df.sort_values(by=["author", "date"], inplace=True)
-        # convert authors from (name, email) pairs to unique ids
-        df["author"] = self._le.fit_transform(df["author"])
-
-        train_repos, test_repos = train_test_split(
-            df["repo"].unique().tolist(), test_size=0.01, shuffle=True, random_state=123
-        )
-        train_repos, val_repos = train_test_split(train_repos, test_size=0.01, shuffle=True, random_state=123)
-
-        # split by repos and keep track of val & test authors
-        train_df = df.loc[df["repo"].isin(train_repos)]
-        val_df = df.loc[df["repo"].isin(val_repos)]
-        test_df = df.loc[df["repo"].isin(test_repos)]
-
-        # drop authors which appear in val and test from train
-        val_authors = val_df["author"].unique()
-        test_authors = test_df["author"].unique()
-        self._test_and_val_authors.update(list(test_authors) + list(val_authors))
-        train_df = train_df.loc[~train_df["author"].isin(self._test_and_val_authors)]
-
-        for df, part in [(train_df, "TRAIN"), (val_df, "VAL"), (test_df, "TEST")]:
-            logging.info(f"=== {part} ===")
-            logging.info(f"{len(df)} examples")
-            logging.info(f"{df['repo'].nunique()} repos")
-            logging.info(f"{df['author'].nunique()} authors")
-
-        train_df[["id", "author", "date", "hash", "message", "diff", "repo"]].to_csv(
-            os.path.join(output_dir, "train.csv"), index=False, header=True
-        )
-        val_df[["id", "author", "date", "hash", "message", "diff", "repo"]].to_csv(
-            os.path.join(output_dir, "val.csv"), index=False, header=True
-        )
-        test_df[["id", "author", "date", "hash", "message", "diff", "repo"]].to_csv(
-            os.path.join(output_dir, "test.csv"), index=False, header=True
-        )
 
     def _tokenize_diffs(self, diffs: List[str]) -> List[List[int]]:
         res = []
@@ -101,26 +61,28 @@ class TrainingProcessor:
             os.path.join(output_dir, f"{part}.json"), lines=True, orient="records"
         )
 
-    def __call__(self, input_filename: str, output_dir: str):
-        self._split_by_repos(input_filename=input_filename, output_dir=output_dir)
+    def __call__(self, input_root_dir: str, output_dir: str):
         for part in ["train", "val", "test"]:
-            self._process_part(input_filename=os.path.join(output_dir, f"{part}.csv"), output_dir=output_dir, part=part)
+            self._process_part(
+                input_filename=os.path.join(input_root_dir, f"{part}.csv"), output_dir=output_dir, part=part
+            )
 
 
 if __name__ == "__main__":
     logging.getLogger().setLevel(logging.INFO)
     parser = argparse.ArgumentParser(
-        description="This script splits data on train/val/test, tokenizes and saves in a necessary format.",
+        description="This script tokenizes and saves train/val/test parts of dataset in a necessary format.",
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
     )
     parser.add_argument(
-        "--input_filename", type=str, default="../commits_drop_unchanged.csv", help="path to .csv file with data"
+        "--input_root_dir",
+        type=str,
+        help="path to directory with input data",
     )
     parser.add_argument(
         "--output_dir",
         type=str,
-        default="../training_data/",
-        help="path to save training data",
+        help="path to save processed data",
     )
     parser.add_argument(
         "--diff_tok",
@@ -136,4 +98,4 @@ if __name__ == "__main__":
     )
     args = parser.parse_args()
     proc = TrainingProcessor(diff_tokenizer_name_or_path=args.diff_tok, msg_tokenizer_name_or_path=args.msg_tok)
-    proc(input_filename=args.input_filename, output_dir=args.output_dir)
+    proc(input_root_dir=args.input_root_dir, output_dir=args.output_dir)

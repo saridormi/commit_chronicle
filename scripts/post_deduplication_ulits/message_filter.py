@@ -4,7 +4,7 @@ import csv
 import logging
 import pandas as pd
 from tqdm import tqdm
-from typing import Optional, Tuple
+from typing import Tuple
 from joblib import Parallel, delayed
 
 
@@ -103,11 +103,6 @@ class MessageFilter:
         return id, x
 
     @staticmethod
-    def _check_ascii(id: int, message: str, diff: str) -> Optional[int]:
-        if isinstance(message, str) and isinstance(diff, str) and message.isascii() and diff.isascii():
-            return id
-
-    @staticmethod
     def filter(input_filename: str, output_filename: str, chunksize: int):
         fieldnames = ["id", "author", "date", "hash", "message", "diff", "repo"]
         with open(output_filename, "w") as csvfile:
@@ -118,7 +113,6 @@ class MessageFilter:
 
         reader = pd.read_csv(input_filename, chunksize=chunksize)
         for chunk in tqdm(reader):
-
             with Parallel(8) as pool:
                 filtered_messages = pool(
                     delayed(MessageFilter._filter)(id=id, message=item) for id, item in chunk["message"].items()
@@ -126,14 +120,6 @@ class MessageFilter:
 
             chunk["message"] = pd.Series({i: msg for i, msg in filtered_messages})
             chunk = chunk.loc[chunk.message.str.len() > 0]
-
-            with Parallel(8) as pool:
-                ascii_ids = pool(
-                    delayed(MessageFilter._check_ascii)(id=id, message=item["message"], diff=item["diff"])
-                    for id, item in chunk[["message", "diff"]].iterrows()
-                )
-            ascii_ids = [x for x in ascii_ids if x is not None]
-            chunk = chunk.loc[ascii_ids]
             chunk[["id", "author", "date", "hash", "message", "diff", "repo"]].to_csv(
                 output_filename, mode="a", index=False, header=False
             )
@@ -147,13 +133,10 @@ if __name__ == "__main__":
         description="This script calculates percentiles for number of tokens in given .csv file",
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
     )
-    parser.add_argument(
-        "--input_filename", type=str, default="../commits_no_outliers_2048.csv", help="path to .csv file with data"
-    )
+    parser.add_argument("--input_filename", type=str, help="path to .csv file with data")
     parser.add_argument(
         "--output_filename",
         type=str,
-        default="../filtered_commits.csv",
         help="path to save .csv file with filtered commits",
     )
     parser.add_argument("--chunksize", type=int, default=1000, help="# of examples to process at one step")

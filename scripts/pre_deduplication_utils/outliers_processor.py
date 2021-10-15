@@ -1,4 +1,3 @@
-import argparse
 import os
 import csv
 import logging
@@ -10,19 +9,15 @@ from tqdm import tqdm
 from typing import Optional
 from joblib import Parallel, delayed
 
-nltk.download("punkt")
 
-
-class PercentileProcessor:
+class OutliersProcessor:
     """
     This class tokenizes diffs and messages from data, calculates percentiles for number of tokens
     and drops examples out of [lower_percentile, upper_percentile] range.
     There is also an option to drop examples with more tokens in diffs than specific `diff_upper_bound` value.
     """
 
-    def __init__(
-        self, lower_percentile: float = 0.05, upper_percentile: float = 0.95, diff_upper_bound: Optional[int] = None
-    ):
+    def __init__(self, lower_percentile: float, upper_percentile: float, diff_upper_bound: Optional[int] = None):
         self.lower_percentile = lower_percentile
         self.upper_percentile = upper_percentile
         self.diff_upper_bound = diff_upper_bound
@@ -59,12 +54,12 @@ class PercentileProcessor:
             with Parallel(8) as pool:
                 # get # tokens in diffs from current chuck
                 diff_res = pool(
-                    delayed(PercentileProcessor._get_n_tokens_single_ex)(item["id"], item["diff"])
+                    delayed(OutliersProcessor._get_n_tokens_single_ex)(item["id"], item["diff"])
                     for _, item in chunk[["id", "diff"]].iterrows()
                 )
                 # get # tokens in messages from current chuck
                 message_res = pool(
-                    delayed(PercentileProcessor._get_n_tokens_single_ex)(item["id"], item["message"])
+                    delayed(OutliersProcessor._get_n_tokens_single_ex)(item["id"], item["message"])
                     for _, item in chunk[["id", "message"]].iterrows()
                 )
             # append results from current chunk to target files
@@ -123,6 +118,10 @@ class PercentileProcessor:
         with open(os.path.join(n_tokens_dir, "n_tokens_diff.txt"), "r") as file:
             for line in file:
                 id, n_tokens = line.strip().split(",")
+                try:
+                    id = int(id)
+                except ValueError:
+                    self._ids_to_drop.add(id)
                 if (
                     int(n_tokens) < self._diff_percentiles[self.lower_percentile]
                     or int(n_tokens) > self._diff_percentiles[self.upper_percentile]
@@ -144,7 +143,6 @@ class PercentileProcessor:
         and saves resuls to separate file `n_tokens_dir`
         """
         logging.info(f"Got {len(self._ids_to_drop)} ids to drop")
-        self._ids_to_drop = set([int(i) if i.isdecimal() else i for i in self._ids_to_drop])
 
         fieldnames = ["id", "author", "date", "hash", "message", "diff", "repo"]
         with open(output_filename, "w") as csvfile:
@@ -166,60 +164,23 @@ class PercentileProcessor:
                 f" ({n_dropped} outliers total)"
             )
 
-    def __call__(self, input_filename: str, output_filename: str, n_tokens_dir: str, chunksize: int):
-        PercentileProcessor._get_n_tokens(input_filename=input_filename, n_tokens_dir=n_tokens_dir, chunksize=chunksize)
-        self._calculate_percentiles(n_tokens_dir=n_tokens_dir)
+    def __call__(
+        self,
+        input_filename: str,
+        output_filename: str,
+        n_tokens_dir: str,
+        chunksize: int,
+        percentile_dir: Optional[str] = None,
+    ):
+        OutliersProcessor._get_n_tokens(input_filename=input_filename, n_tokens_dir=n_tokens_dir, chunksize=chunksize)
+
+        if percentile_dir:
+            with open(os.path.join(percentile_dir, "diff.json"), "r") as file:
+                self._diff_percentiles = json.load(file, object_hook=lambda d: {float(k): v for k, v in d.items()})
+            with open(os.path.join(percentile_dir, "message.json"), "r") as file:
+                self._message_percentiles = json.load(file, object_hook=lambda d: {float(k): v for k, v in d.items()})
+        else:
+            self._calculate_percentiles(n_tokens_dir=n_tokens_dir)
+
         self._get_ids_to_drop(n_tokens_dir=n_tokens_dir)
         self._drop_ids(input_filename=input_filename, output_filename=output_filename, chunksize=chunksize)
-
-
-if __name__ == "__main__":
-    logging.getLogger().setLevel(logging.INFO)
-    parser = argparse.ArgumentParser(
-        description="This script calculates percentiles for number of tokens in given .csv file",
-        formatter_class=argparse.ArgumentDefaultsHelpFormatter,
-    )
-    parser.add_argument(
-        "--input_filename", type=str, nargs=1, default="../commits_no_dup.csv", help="path to read .csv file with data"
-    )
-    parser.add_argument(
-        "--output_filename",
-        type=str,
-        nargs=1,
-        default="../commits_no_outliers_2048.csv",
-        help="path to save .csv file with processed data",
-    )
-    parser.add_argument(
-        "--n_tokens_dir",
-        type=str,
-        nargs=1,
-        default="../percentile",
-        help="path to directory to save processed data",
-    )
-    parser.add_argument("--chunksize", type=int, nargs=1, default=1000, help="# of examples to process at one step")
-    parser.add_argument(
-        "--lower_percentile",
-        type=float,
-        nargs="?",
-        default=0.05,
-        help="lower percentile for # tokens in diffs and messages",
-    )
-    parser.add_argument(
-        "--upper_percentile",
-        type=float,
-        nargs="?",
-        default=0.95,
-        help="upper percentile for # tokens in diffs and messages",
-    )
-    parser.add_argument("--diff_upper_bound", type=int, nargs="?", help="specific upper bound for # tokens in diffs")
-    args = parser.parse_args()
-
-    processor = PercentileProcessor(
-        lower_percentile=args.lower_percentile, upper_percentile=args.upper_percentile, diff_upper_bound=2048
-    )
-    processor(
-        input_filename=args.input_filename,
-        n_tokens_dir=args.n_tokens_dir,
-        output_filename=args.output_filename,
-        chunksize=args.chunksize,
-    )

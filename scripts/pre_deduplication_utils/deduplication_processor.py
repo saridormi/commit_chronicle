@@ -1,6 +1,4 @@
 import re
-import argparse
-import os
 import hashlib
 import logging
 import pandas as pd
@@ -9,17 +7,11 @@ from collections import Counter
 from tqdm import tqdm
 from joblib import Parallel, delayed
 
-logging.basicConfig(
-    filename="../logs/deduplication.log",
-    format="%(asctime)s %(levelname)-8s %(message)s",
-    datefmt="%Y-%m-%d %H:%M:%S",
-    level=logging.INFO,
-)
 
-
-class DeduplicationPreprocessor:
-    def __init__(self):
+class DeduplicationProcessor:
+    def __init__(self, project_id: int):
         self._separators = r'[;.\[\]\(\)\~!\-\+\&\*/%<>\^\|\?\{\}=\#,"\\\:\$\'`@ +\n\r\t]'
+        self._project_id = project_id
 
     def _remove_filenames(self, x: str) -> str:
         """
@@ -40,12 +32,12 @@ class DeduplicationPreprocessor:
         x = re.sub("deleted file .*?\n", "", x)
         return x
 
-    def hash_string(self, x: str) -> str:
+    def _hash_string(self, x: str) -> str:
         hash = hashlib.md5()
         hash.update(x.encode("utf-8"))
         return hash.hexdigest()
 
-    def split_by_several_separators(self, x: str) -> List[str]:
+    def _split_by_several_separators(self, x: str) -> List[str]:
         return [y.strip() for y in re.split(self._separators, x) if y]
 
     def _preprocess_single_example(self, example: str, id: int, diff_mode: bool) -> Tuple[str, int, int]:
@@ -74,8 +66,8 @@ class DeduplicationPreprocessor:
                 logging.error(f"[{data_col}] {id}: `{example}` is not a string")
                 example = str(example)
 
-        c = Counter(self.split_by_several_separators(example))
-        tokens_enc = self.hash_string(example) + "@#@" + ",".join(f"{token}@@::@@{freq}" for token, freq in c.items())
+        c = Counter(self._split_by_several_separators(example))
+        tokens_enc = self._hash_string(example) + "@#@" + ",".join(f"{token}@@::@@{freq}" for token, freq in c.items())
         total_n_tokens = sum(c.values())
         unique_n_tokens = len(c)
         return tokens_enc, total_n_tokens, unique_n_tokens
@@ -91,9 +83,9 @@ class DeduplicationPreprocessor:
         tokens_enc, total_n_tokens, unique_n_tokens = self._preprocess_single_example(
             example=item, id=id, diff_mode=diff_mode
         )
-        return f"1,{id},{total_n_tokens},{unique_n_tokens},{tokens_enc}\n"
+        return f"{self._project_id},{id},{total_n_tokens},{unique_n_tokens},{tokens_enc}\n"
 
-    def preprocess(self, csv_filename: str, chunksize: int, output_dir: str, diff_mode: bool):
+    def preprocess(self, input_filename: str, output_filename: str, chunksize: int, diff_mode: bool):
         """
         Processes each example in 'input_filename' (iterating in chunks of 'chunksize') to format
         'project_id,file_id,total_tokens,unique_tokens,token_hash@#@token1@@::@@frequency,token2@@::@@frequency,...'
@@ -103,13 +95,12 @@ class DeduplicationPreprocessor:
         """
         data_col = "diff" if diff_mode else "message"
         # make sure to clear target file
-        os.makedirs(output_dir, exist_ok=True)
-        open(os.path.join(output_dir, f"res_{data_col}.txt"), "w", encoding="utf-8").close()
+        open(output_filename, "w", encoding="utf-8").close()
 
         logging.info(f"[{data_col}] Starting processing")
 
-        reader = pd.read_csv(csv_filename, chunksize=chunksize)
-        for chunk in tqdm(reader, total=2846334 // chunksize + 1):
+        reader = pd.read_csv(input_filename, chunksize=chunksize)
+        for chunk in tqdm(reader):
 
             with Parallel(8) as pool:
                 res = pool(
@@ -117,29 +108,7 @@ class DeduplicationPreprocessor:
                     for _, item in chunk[["id", data_col]].iterrows()
                 )
 
-            with open(os.path.join(output_dir, f"res_{data_col}.txt"), "a", encoding="utf-8") as target:
+            with open(output_filename, "a", encoding="utf-8") as target:
                 target.writelines(res)
 
         logging.info(f"[{data_col}] Finished processing")
-
-
-if __name__ == "__main__":
-    parser = argparse.ArgumentParser(
-        description="This script processes .csv file with data into necessary format for deduplication",
-        formatter_class=argparse.ArgumentDefaultsHelpFormatter,
-    )
-    parser.add_argument(
-        "--output_dir",
-        type=str,
-        default="../deduplication",
-        help="path to directory to save processed data",
-    )
-    parser.add_argument("--input_filename", type=str, default="../commits_fxd.csv", help="path to .csv file with data")
-    parser.add_argument("--diff_mode", type=bool, help="`True` to process diffs and `False` to process messages")
-    parser.add_argument("--chunksize", type=int, default=1000, help="# of examples to process at one step")
-    args = parser.parse_args()
-
-    dp = DeduplicationPreprocessor()
-    dp.preprocess(
-        csv_filename=args.csv_filename, chunksize=args.chunksize, output_dir=args.output_dir, diff_mode=args.diff_mode
-    )
