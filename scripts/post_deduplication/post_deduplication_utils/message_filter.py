@@ -1,10 +1,9 @@
-import argparse
 import re
 import csv
 import logging
 import pandas as pd
 from tqdm import tqdm
-from typing import Tuple
+from typing import Tuple, Optional
 from joblib import Parallel, delayed
 
 
@@ -88,7 +87,7 @@ class MessageFilter:
         return x
 
     @staticmethod
-    def _filter(id: int, message: str) -> Tuple[int, str]:
+    def _filter(message: str) -> str:
         try:
             x = MessageFilter._filter_emails(message)
             x = MessageFilter._filter_urls(x)
@@ -98,9 +97,8 @@ class MessageFilter:
             x = MessageFilter._filter_sha(x)
             x = x.strip()
         except TypeError:
-            logging.error(f"TypeError with {id}")
             x = ""
-        return id, x
+        return x
 
     @staticmethod
     def filter(input_filename: str, output_filename: str, chunksize: int):
@@ -109,39 +107,21 @@ class MessageFilter:
             writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
             writer.writeheader()
 
-        logging.info(f"Starting processing")
+        logging.info("Starting processing")
 
         reader = pd.read_csv(input_filename, chunksize=chunksize)
         for chunk in tqdm(reader):
-            with Parallel(8) as pool:
-                filtered_messages = pool(
-                    delayed(MessageFilter._filter)(id=id, message=item) for id, item in chunk["message"].items()
-                )
+            filtered_messages = []
+            for _, message in chunk["message"].items():
+                if isinstance(message, str) and message.isascii():
+                    filtered_messages.append(MessageFilter._filter(message))
+                else:
+                    filtered_messages.append("")
 
-            chunk["message"] = pd.Series({i: msg for i, msg in filtered_messages})
+            chunk["message"] = filtered_messages
             chunk = chunk.loc[chunk.message.str.len() > 0]
             chunk[["id", "author", "date", "hash", "message", "diff", "repo"]].to_csv(
                 output_filename, mode="a", index=False, header=False
             )
 
-        logging.info(f"Finished processing")
-
-
-if __name__ == "__main__":
-    logging.getLogger().setLevel(logging.INFO)
-    parser = argparse.ArgumentParser(
-        description="This script calculates percentiles for number of tokens in given .csv file",
-        formatter_class=argparse.ArgumentDefaultsHelpFormatter,
-    )
-    parser.add_argument("--input_filename", type=str, help="path to .csv file with data")
-    parser.add_argument(
-        "--output_filename",
-        type=str,
-        help="path to save .csv file with filtered commits",
-    )
-    parser.add_argument("--chunksize", type=int, default=1000, help="# of examples to process at one step")
-    args = parser.parse_args()
-
-    MessageFilter.filter(
-        input_filename=args.input_filename, output_filename=args.output_filename, chunksize=args.chunksize
-    )
+        logging.info("Finished processing")

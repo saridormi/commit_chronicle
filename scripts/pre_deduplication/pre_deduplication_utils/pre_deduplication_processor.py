@@ -8,7 +8,7 @@ from tqdm import tqdm
 from joblib import Parallel, delayed
 
 
-class DeduplicationProcessor:
+class PreDeduplicationProcessor:
     def __init__(self, project_id: int):
         self._separators = r'[;.\[\]\(\)\~!\-\+\&\*/%<>\^\|\?\{\}=\#,"\\\:\$\'`@ +\n\r\t]'
         self._project_id = project_id

@@ -1,7 +1,7 @@
 import os
 import logging
 import argparse
-from pre_deduplication_utils import DeduplicationProcessor, OutliersProcessor, unite_to_one_file
+from scripts.pre_deduplication.pre_deduplication_utils import PreDeduplicationProcessor, OutliersProcessor, unite_to_one_file
 
 logging.basicConfig(
     filename="../logs/prepare_for_deduplication.log",
@@ -65,7 +65,7 @@ if __name__ == "__main__":
     # preprocess data into format SourcererCC expects
     # ------------------------------------------------
     for part_id, part in [(1, "train"), (2, "val"), (3, "test"), (4, "val_original"), (5, "test_original")]:
-        dp = DeduplicationProcessor(project_id=part_id)
+        dp = PreDeduplicationProcessor(project_id=part_id)
         if f"{part}_message.txt" not in os.listdir(args.deduplication_dir):
             logging.info(f"Processing messages from {part} into SourcererCC format")
             dp.preprocess(
