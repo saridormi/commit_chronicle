@@ -22,8 +22,9 @@ class PostDeduplicationProcessor:
                 fieldnames = ["project_id", "id", "author", "date", "hash", "repo"]
                 with open(output_filename, "w") as _:
                     pass
-                reader = pd.read_csv(os.path.join(self._raw_data_dir, f"{part}_no_outliers.csv"),
-                                     chunksize=self._chunksize)
+                reader = pd.read_csv(
+                    os.path.join(self._raw_data_dir, f"{part}_no_outliers.csv"), chunksize=self._chunksize
+                )
                 for chunk in tqdm(reader, desc=f"Iterating over {part} to extract metadata"):
                     chunk["project_id"] = i + 1
                     chunk[fieldnames].to_csv(output_filename, mode="a", index=False, header=False)
@@ -39,8 +40,11 @@ class PostDeduplicationProcessor:
         For each pair of clones from `input_filename`, find corresponding metadata and save it to `output_filename`.
         """
         logging.info(f"Adding metadata to {input_filename}")
-        df = pd.read_csv(os.path.join(self._deduplication_dir, "metadata.csv"), header=None,
-                         names=["project_id", "id", "author", "date", "hash", "repo"]).sort_values(by=["project_id", "id"])
+        df = pd.read_csv(
+            os.path.join(self._deduplication_dir, "metadata.csv"),
+            header=None,
+            names=["project_id", "id", "author", "date", "hash", "repo"],
+        ).sort_values(by=["project_id", "id"])
         indexes = {}
         for idx, row in tqdm(df.iterrows()):
             indexes[(row["project_id"], row["id"])] = idx
@@ -59,15 +63,18 @@ class PostDeduplicationProcessor:
                 ex1 = data[indexes[(pr_1, s_1)]]
                 ex2 = data[indexes[(pr_2, s_2)]]
 
-                metadata.append({"part_id1": ex1[0],
-                                 "id1": ex1[1],
-                                 "repo1": ex1[5],
-                                 "hash1": ex1[4],
-                                 "part_id2": ex2[0],
-                                 "id2": ex2[1],
-                                 "repo2": ex2[5],
-                                 "hash2": ex2[4],
-                                 })
+                metadata.append(
+                    {
+                        "part_id1": ex1[0],
+                        "id1": ex1[1],
+                        "repo1": ex1[5],
+                        "hash1": ex1[4],
+                        "part_id2": ex2[0],
+                        "id2": ex2[1],
+                        "repo2": ex2[5],
+                        "hash2": ex2[4],
+                    }
+                )
 
                 if i % self._chunksize == 0:
                     with open(output_filename, "a") as csvfile:
@@ -144,18 +151,29 @@ class PostDeduplicationProcessor:
                 f" ({n_dropped} duplicates total)"
             )
 
-    def __call__(self, msg_filename: str, diff_filename: str,
-                 raw_msg_filename: Optional[str] = None, raw_diff_filename: Optional[str] = None):
+    def __call__(
+        self,
+        msg_filename: str,
+        diff_filename: str,
+        raw_msg_filename: Optional[str] = None,
+        raw_diff_filename: Optional[str] = None,
+    ):
         if not os.path.isfile(os.path.join(self._deduplication_dir, "metadata.csv")):
             self._extract_metadata()
 
         if msg_filename not in os.listdir(self._deduplication_dir):
-            self._add_metadata(input_filename=os.path.join(self._deduplication_dir, raw_msg_filename),
-                               output_filename=os.path.join(self._deduplication_dir, msg_filename))
+            self._add_metadata(
+                input_filename=os.path.join(self._deduplication_dir, raw_msg_filename),
+                output_filename=os.path.join(self._deduplication_dir, msg_filename),
+            )
         if diff_filename not in os.listdir(self._deduplication_dir):
-            self._add_metadata(input_filename=os.path.join(self._deduplication_dir, raw_diff_filename),
-                               output_filename=os.path.join(self._deduplication_dir, diff_filename))
+            self._add_metadata(
+                input_filename=os.path.join(self._deduplication_dir, raw_diff_filename),
+                output_filename=os.path.join(self._deduplication_dir, diff_filename),
+            )
 
-        self._get_full_clones(msg_filename=os.path.join(self._deduplication_dir, msg_filename),
-                              diff_filename=os.path.join(self._deduplication_dir, diff_filename))
+        self._get_full_clones(
+            msg_filename=os.path.join(self._deduplication_dir, msg_filename),
+            diff_filename=os.path.join(self._deduplication_dir, diff_filename),
+        )
         self._drop_duplicates()

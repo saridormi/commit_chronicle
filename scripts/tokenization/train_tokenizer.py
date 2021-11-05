@@ -12,7 +12,10 @@ def main(cfg: DictConfig) -> None:
     tokenizer.pre_tokenizer = instantiate(cfg.pre_tokenizer)
 
     trainer = instantiate(cfg.trainer)
-    files = [to_absolute_path(os.path.join(cfg.paths.data_root_dir, f"{part}.txt")) for part in ["train", "val", "test", "val_original", "test_original"]]
+    files = [
+        to_absolute_path(os.path.join(cfg.paths.data_root_dir, f"{part}.txt"))
+        for part in ["train", "val", "test", "val_original", "test_original"]
+    ]
     tokenizer.train(trainer, files)
     tokenizer.save(to_absolute_path(cfg.paths.tokenizer_root_dir))
 

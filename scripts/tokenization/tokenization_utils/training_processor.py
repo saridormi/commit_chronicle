@@ -18,9 +18,13 @@ class TrainingProcessor:
     3) Save everything to format for my training pipeline
     """
 
-    def __init__(self, diff_tokenizer_name_or_path: str, msg_tokenizer_name_or_path: str,
-                 diff_kwargs: Dict[str, Any],
-                 msg_kwargs: Dict[str, Any]):
+    def __init__(
+        self,
+        diff_tokenizer_name_or_path: str,
+        msg_tokenizer_name_or_path: str,
+        diff_kwargs: Dict[str, Any],
+        msg_kwargs: Dict[str, Any],
+    ):
         self._le = LabelEncoder()
         self._test_and_val_authors = set()
         self._diff_tok = PreTrainedTokenizerFast(tokenizer_file=diff_tokenizer_name_or_path)
@@ -33,9 +37,9 @@ class TrainingProcessor:
         res = []
         for diff in diffs:
             res.append(
-                self._diff_tok.convert_tokens_to_ids(["[CLS]"]) +
-                self._diff_tok(diff, **self._diff_kwargs).input_ids +
-                self._diff_tok.convert_tokens_to_ids(["[SEP]"])
+                self._diff_tok.convert_tokens_to_ids(["[CLS]"])
+                + self._diff_tok(diff, **self._diff_kwargs).input_ids
+                + self._diff_tok.convert_tokens_to_ids(["[SEP]"])
             )
         return res
 
@@ -81,6 +85,6 @@ class TrainingProcessor:
             diff_input_ids = self._tokenize_diffs(chunk["diff"].tolist())
             chunk["diff_input_ids"] = diff_input_ids
 
-            with jsonlines.open(os.path.join(output_dir, f"{part}.json"), mode='a') as writer:
+            with jsonlines.open(os.path.join(output_dir, f"{part}.json"), mode="a") as writer:
                 for row in chunk[["diff_input_ids", "pos_in_history", "author"]].to_dict(orient="records"):
                     writer.write(row)

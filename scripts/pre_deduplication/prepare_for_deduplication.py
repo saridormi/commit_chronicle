@@ -1,7 +1,11 @@
 import os
 import logging
 import argparse
-from scripts.pre_deduplication.pre_deduplication_utils import PreDeduplicationProcessor, OutliersProcessor, unite_to_one_file
+from scripts.pre_deduplication.pre_deduplication_utils import (
+    PreDeduplicationProcessor,
+    OutliersProcessor,
+    unite_to_one_file,
+)
 
 logging.basicConfig(
     filename="../logs/prepare_for_deduplication.log",
