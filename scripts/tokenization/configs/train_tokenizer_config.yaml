@@ -3,12 +3,13 @@ tokenizer:
   dropout: 0.5
   unk_token: '[UNK]'
 pre_tokenizer:
-  _target_: tokenizers.pre_tokenizers.ByteLevel
-  add_prefix_space: false
+  _target_: tokenizers.pre_tokenizers.Split
+  behavior: removed
+sep_token: $@@$
 trainer:
   _convert_: partial
   _target_: tokenizers.trainers.BpeTrainer
-  special_tokens: ['[UNK]', '[CLS]', '[SEP]', '[PAD]', '[MASK]']
+  special_tokens: ['[UNK]', '[CLS]', '[SEP]', '[PAD]', '[MASK]', '\n']
 paths:
-  data_root_dir: ../../extracted_data/diffs/
-  tokenizer_root_dir: ../../tokenizer/diff_tokenizer.json
+  data_dir: ../../extracted_data
+  tokenizer_fname: ../../tokenizer/diff_tokenizer.json
