@@ -9,8 +9,9 @@ class DiffFilter:
     Class to remove unchanged lines from diffs.
     """
 
-    @staticmethod
-    def _filter(diff: str) -> str:
+    fname_pattern = "^(?:\/?[\w\-_]+\/)*?(?:[\w\-_]*\.[\w\-_]+?)*?$"
+
+    def __call__(self, diff: str) -> str:
         """
         This method preprocessed single diff string.
         Currently _preprocessing for diffs includes the following:
@@ -21,6 +22,9 @@ class DiffFilter:
         processed_lines = []
 
         for line in diff_lines:
+            if line.startswith("@@"):
+                line = line.split("@@")[-1].strip()
+
             if line.startswith("new file"):
                 # line in git diff when file was created
                 # example: new file <filename>
@@ -55,10 +59,9 @@ class DiffFilter:
                 # example: Binary files <filename1> and <filename2> differ
                 processed_lines.append(line)
 
-            elif len(line.split()) == 1 and len(line.strip()) > 1:
-                # filename header in case of file modification and maybe other rare cases that won't hurt too much
-                # example: <filename>
-                processed_lines.append(line)
+            elif len(line.strip()) > 0 and (re.match(self.fname_pattern, line, flags=re.MULTILINE)):
+                # filename header
+                processed_lines.append(f"<FNAME>{line}")
 
         processed_diff = "\n".join(processed_lines)
         processed_diff = re.sub(r" +", " ", processed_diff)
@@ -71,12 +74,13 @@ class DiffFilter:
             writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
             writer.writeheader()
 
+        filter = DiffFilter()
         reader = pd.read_csv(input_filename, chunksize=chunksize)
-        for chunk in tqdm(reader, desc=f"Filtering diffs from {input_filename}"):
+        for chunk in tqdm(reader, desc=f"Filtering diffs from {input_filename}", leave=False):
             filtered_diffs = []
             for _, diff in chunk["diff"].items():
                 if isinstance(diff, str) and diff.isascii():
-                    filtered_diffs.append(DiffFilter._filter(diff))
+                    filtered_diffs.append(filter(diff))
                 else:
                     filtered_diffs.append("")
             chunk["diff"] = filtered_diffs

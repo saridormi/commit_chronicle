@@ -110,7 +110,7 @@ class MessageFilter:
         logging.info("Starting processing")
 
         reader = pd.read_csv(input_filename, chunksize=chunksize)
-        for chunk in tqdm(reader):
+        for chunk in tqdm(reader, desc=f"Processing messages from {input_filename}", leave=False):
             filtered_messages = []
             for _, message in chunk["message"].items():
                 if isinstance(message, str) and message.isascii():

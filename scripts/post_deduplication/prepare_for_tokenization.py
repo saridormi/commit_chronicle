@@ -18,10 +18,10 @@ if __name__ == "__main__":
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
     )
     parser.add_argument(
-        "--raw_data_dir", type=str, default="../extracted_data/", help="path to directory with commits data"
+        "--raw_data_dir", type=str, default="../../extracted_data/", help="path to directory with commits data"
     )
     parser.add_argument(
-        "--deduplication_dir", type=str, default="../deduplication/", help="path to directory with clones results"
+        "--deduplication_dir", type=str, default="../../deduplication/", help="path to directory with clones results"
     )
     parser.add_argument("--chunksize", type=int, default=5000, help="# of examples to process at one step")
     args = parser.parse_args()
@@ -39,30 +39,27 @@ if __name__ == "__main__":
     # --------------------------------------
     #             filter messages
     # --------------------------------------
-    # if f"filtered_train.csv" not in os.listdir(args.raw_data_dir):
-    logging.info(f"Filtering messages from train")
-    MessageFilter.filter(
-        input_filename=os.path.join(args.raw_data_dir, "train_no_duplicates.csv"),
-        output_filename=os.path.join(args.raw_data_dir, "filtered_train.csv"),
-        chunksize=args.chunksize,
-    )
-    for part in ["val", "test", "val_original", "test_original"]:
-        # if f"filtered_{part}.csv" not in os.listdir(args.raw_data_dir):
-        logging.info(f"Filtering messages from {part}")
+    if f"filtered_train.csv" not in os.listdir(args.raw_data_dir):
+        logging.info(f"Filtering messages from train")
         MessageFilter.filter(
-            input_filename=os.path.join(args.raw_data_dir, f"{part}_no_outliers.csv"),
-            output_filename=os.path.join(args.raw_data_dir, f"filtered_{part}.csv"),
+            input_filename=os.path.join(args.raw_data_dir, "train_no_duplicates.csv"),
+            output_filename=os.path.join(args.raw_data_dir, "filtered_train.csv"),
             chunksize=args.chunksize,
         )
-    # --------------------------------------
-    #               drop NaNs
-    # --------------------------------------
-    for part in ["train", "val", "test", "val_original", "test_original"]:
-        df = pd.read_csv(os.path.join(args.raw_data_dir, f"filtered_{part}.csv"))
-        df = df.dropna()
-        df[["id", "author", "date", "hash", "message", "diff", "repo"]].to_csv(
-            os.path.join(args.raw_data_dir, f"{part}_final.csv"), index=False, header=True
-        )
+    for part in ["val", "test", "val_original", "test_original"]:
+        if f"filtered_{part}.csv" not in os.listdir(args.raw_data_dir):
+            logging.info(f"Filtering messages from {part}")
+            MessageFilter.filter(
+                input_filename=os.path.join(args.raw_data_dir, f"{part}_no_outliers.csv"),
+                output_filename=os.path.join(args.raw_data_dir, f"filtered_{part}.csv"),
+                chunksize=args.chunksize,
+            )
+            df = pd.read_csv(os.path.join(args.raw_data_dir, f"filtered_{part}.csv"))
+            df = df.dropna()
+            df[["id", "author", "date", "hash", "message", "diff", "repo"]].to_csv(
+                os.path.join(args.raw_data_dir, f"filtered_{part}.csv"), index=False, header=True
+            )
+
     # --------------------------------------
     #             filter diffs
     # --------------------------------------
@@ -74,13 +71,8 @@ if __name__ == "__main__":
                 output_filename=os.path.join(args.raw_data_dir, f"{part}_final.csv"),
                 chunksize=args.chunksize,
             )
-
-    # --------------------------------------
-    #               drop NaNs
-    # --------------------------------------
-    for part in ["train", "val", "test", "val_original", "test_original"]:
-        df = pd.read_csv(os.path.join(args.raw_data_dir, f"{part}_final.csv"))
-        df = df.dropna()
-        df[["id", "author", "date", "hash", "message", "diff", "repo"]].to_csv(
-            os.path.join(args.raw_data_dir, f"{part}_final.csv"), index=False, header=True
-        )
+            df = pd.read_csv(os.path.join(args.raw_data_dir, f"{part}_final.csv"))
+            df = df.dropna()
+            df[["id", "author", "date", "hash", "message", "diff", "repo"]].to_csv(
+                os.path.join(args.raw_data_dir, f"{part}_final.csv"), index=False, header=True
+            )
