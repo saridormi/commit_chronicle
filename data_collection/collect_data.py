@@ -49,7 +49,7 @@ def main(cfg: DictConfig) -> None:
             temp_clone_dir=cfg.paths.temp_clone_dir,
             output_dir=os.path.join(cfg.paths.output_dir, part),
             logger_f=get_logger,
-            **cfg.repo_processor
+            **cfg.repo_processor,
         )
 
         with Parallel(cfg.num_workers) as pool:

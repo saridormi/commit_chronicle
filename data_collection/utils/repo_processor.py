@@ -67,32 +67,30 @@ class RepoProcessor:
                 f'{self._temp_clone_dir}/{repo_url.split("/")[-1].replace(".git", "")}', **repo_kwargs
             )
         else:
-            self.log(f"[{repo_name}] Cloning...", 10)
-            try:
-                repo = pydriller.RepositoryMining(repo_url, clone_repo_to=self._temp_clone_dir, **repo_kwargs)
-            except Exception as e:  # sometimes git errors can happen during cloning (e.g. if repo was deleted)
-                self.log(f"[{repo_name}] Couldn't clone; {e}", 40)
-                return
+            repo = pydriller.RepositoryMining(repo_url, clone_repo_to=self._temp_clone_dir, **repo_kwargs)
 
         self.log(f"[{repo_name}] Start processing", 20)
 
         self._prepare_outfile(out_fname)
 
         commits_data = []
+        try:
+            for commit in repo.traverse_commits():
+                try:
+                    cur_data = CommitProcessor.process_commit(commit)
+                except (AttributeError, NoOptionError) as e:
+                    self.log(f"[{repo_name}] {e} with {commit.hash}", 40)
+                    continue
 
-        for commit in repo.traverse_commits():
-            try:
-                cur_data = CommitProcessor.process_commit(commit)
-            except (AttributeError, NoOptionError) as e:
-                self.log(f"[{repo_name}] {e} with {commit.hash}", 40)
-                continue
+                commits_data.append(cur_data)
 
-            commits_data.append(cur_data)
-
-            if len(commits_data) >= self._chunksize:
-                self.log(f"[{repo_name}] Processed more than {self._chunksize} commits, writing to file", 10)
-                self._append_to_outfile(commits_data, out_fname)
-                commits_data = []
+                if len(commits_data) >= self._chunksize:
+                    self.log(f"[{repo_name}] Processed more than {self._chunksize} commits, writing to file", 10)
+                    self._append_to_outfile(commits_data, out_fname)
+                    commits_data = []
+        except Exception as e:  # sometimes random errors can happen during cloning (e.g. if repo was deleted)
+            self.log(f"[{repo_name}] Couldn't clone; {e}", 40)
+            return
 
         if len(commits_data) > 0:
             self.log(f"[{repo_name}] Final writing to file", 10)
