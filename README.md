@@ -2,14 +2,13 @@
 
 ![GitHub](https://img.shields.io/github/license/saridormi/commits_dataset?style=for-the-badge)
 
-> :exclamation: work in progress
+> :exclamation: WARNING: I've changed a lot recently and readme is not really up to date yet
 
 This repository contains code for collecting and filtering data about commits from open source GitHub repos.
 
 ## Table of contents
 - [Ready-to-use dataset](#ready-to-use-dataset)
 - [How to use data collection code](#how-to-use-data-collection-code)
-- [Description of data filtering process](#description-of-data-filtering-process)
 
 ## Ready-to-use dataset 
 
