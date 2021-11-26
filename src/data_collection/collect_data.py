@@ -6,7 +6,8 @@ import hydra
 from hydra.utils import to_absolute_path
 from omegaconf import DictConfig
 from joblib import Parallel, delayed
-from utils import RepoProcessor
+
+from src.data_collection.utils import RepoProcessor
 
 
 def get_logger():
@@ -35,8 +36,8 @@ def main(cfg: DictConfig) -> None:
 
     os.makedirs(cfg.paths.temp_clone_dir, exist_ok=True)
 
-    inputs = []
     for part in ["train", "val", "test", "val_original", "test_original"]:
+        inputs = []
         logging.info(f"Processing {part}")
         for repo in os.listdir(os.path.join(cfg.paths.input_dir, part)):
             with open(os.path.join(cfg.paths.input_dir, part, repo), "r") as infile:
@@ -61,6 +62,8 @@ def main(cfg: DictConfig) -> None:
                 )
                 for cur_input in inputs
             )
+
+        rp.unite_files(out_fname=os.path.join(cfg.paths.output_dir, f"{part}.jsonl"))
 
 
 if __name__ == "__main__":
