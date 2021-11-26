@@ -4,7 +4,7 @@ import logging
 from hydra.utils import instantiate, to_absolute_path
 from omegaconf import DictConfig, OmegaConf
 from tokenizers import Tokenizer
-from tokenization_utils import Lexer
+from src.tokenization.utils import Lexer
 
 
 @hydra.main(config_path="configs", config_name="train_tokenizer_config")
@@ -13,7 +13,7 @@ def main(cfg: DictConfig) -> None:
     logging.info(OmegaConf.to_yaml(cfg))
     tokenizer = Tokenizer(instantiate(cfg.tokenizer))
 
-    lexer = Lexer(sep_token=cfg.sep_token)
+    lexer = Lexer(sep_token=cfg.pre_tokenizer.pattern)
     fnames = []
     for part in ["train", "val", "test", "val_original", "test_original"]:
         part_fname = to_absolute_path(os.path.join(cfg.paths.data_dir, f"diffs/{part}.txt"))
@@ -24,13 +24,14 @@ def main(cfg: DictConfig) -> None:
                 output_filename=to_absolute_path(os.path.join(cfg.paths.data_dir, f"{part}_final_pretokenized.csv")),
                 save_diffs=True,
                 diff_filename=to_absolute_path(os.path.join(cfg.paths.data_dir, f"diffs/{part}.txt")),
+                chunksize=cfg.chunksize,
             )
         fnames.append(part_fname)
 
     tokenizer.pre_tokenizer = instantiate(cfg.pre_tokenizer)
 
     trainer = instantiate(cfg.trainer)
-    tokenizer.train(trainer, fnames)
+    tokenizer.train(fnames, trainer)
     tokenizer.save(to_absolute_path(cfg.paths.tokenizer_fname))
 
 

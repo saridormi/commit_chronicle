@@ -2,7 +2,7 @@ import hydra
 import os
 from hydra.utils import to_absolute_path
 from omegaconf import DictConfig, OmegaConf
-from tokenization_utils import TrainingProcessor
+from src.tokenization.utils import TrainingProcessor
 
 
 @hydra.main(config_path="configs", config_name="tokenization_config")

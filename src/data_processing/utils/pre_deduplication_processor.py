@@ -2,35 +2,33 @@ import re
 import hashlib
 import logging
 import pandas as pd
-from typing import List, Tuple
+from typing import List, Dict, Tuple, Union
 from collections import Counter
 from tqdm import tqdm
 from joblib import Parallel, delayed
 
 
 class PreDeduplicationProcessor:
+    """ """
+
     def __init__(self, project_id: int):
         self._separators = r'[;.\[\]\(\)\~!\-\+\&\*/%<>\^\|\?\{\}=\#,"\\\:\$\'`@ +\n\r\t]'
         self._project_id = project_id
 
-    def _remove_filenames(self, x: str) -> str:
+    def _get_diff_from_mods(self, mods: List[Dict[str, str]]) -> str:
         """
-        We don't want to consider filenames when running duplicates search on diffs.
 
-        This method removes all filename patterns:
-        * path/to/file.smth                            - when file is modified
-        (this case is parsed with more complex and error-prone regex)
-        * rename from filename1 \n rename to filename2 - when file is renamed
-        * copy from filename1 \n copy to filename2     - when file is copied
-        * new file filename                            - when file is created
-        * deleted file filename                        - when file is deleted
+
+        We don't want to consider filenames when running duplicates search on diffs.
         """
-        x = re.sub("^(\/?[\w\-_]+\/)*?([\w\-_]+\.[\w\-_]+?)*?\n", "", x)
-        x = re.sub("rename from .*?\n.*?\n", "", x)
-        x = re.sub("copy from .*?\n.*?\n", "", x)
-        x = re.sub("new file .*?\n", "", x)
-        x = re.sub("deleted file .*?\n", "", x)
-        return x
+        commit_diff = []
+        for mod in mods:
+            if mod["change_type"] == "UNKNOWN":
+                continue
+
+            commit_diff.append(mod["diff"])
+
+        return " ".join(commit_diff)
 
     def _hash_string(self, x: str) -> str:
         hash = hashlib.md5()
@@ -40,30 +38,33 @@ class PreDeduplicationProcessor:
     def _split_by_several_separators(self, x: str) -> List[str]:
         return [y.strip() for y in re.split(self._separators, x) if y]
 
-    def _preprocess_single_example(self, example: str, id: int, diff_mode: bool) -> Tuple[str, int, int]:
+    def _preprocess_single_example(
+        self, id: int, example: Union[str, List[Dict[str, str]]], diff_mode: bool
+    ) -> Tuple[str, int, int]:
         """
-        1) Does super simple preprocessing:
-          * diff: remove filenames and '@@ -0,0 +1 @@'-like git stuff
-          * message: cast to lowercase
-        2) Processes resulting string to following format:
+        This method does the following:
+        1) Simple preprocessing:
+          - diff: remove filenames and '@@ -0,0 +1 @@'-like git stuff
+          - message: cast to lowercase
+        2) Converting to following format:
           'token_hash@#@token1@@::@@frequency,token2@@::@@frequency,...'
-        3) Calculates total # tokens and unique # tokens
+        3) Calculating total # tokens and unique # tokens
         """
         data_col = "diff" if diff_mode else "message"
         # diff preprocessing
         if diff_mode:
             try:
-                example = self._remove_filenames(example)
+                example = self._get_diff_from_mods(example)
                 example = re.sub("\@\@ .*? \@\@\n", "", example)
-            except TypeError:
-                logging.error(f"[{data_col}] {id}: `{example}` is not a string")
+            except TypeError as e:
+                logging.error(f"[{data_col}] {id} produced TypeError {e}")
                 example = str(example)
         # message preprocessing
         if not diff_mode:
             try:
                 example = example.lower()
-            except AttributeError:
-                logging.error(f"[{data_col}] {id}: `{example}` is not a string")
+            except AttributeError as e:
+                logging.error(f"[{data_col}] {id} produced AttributeError {e}")
                 example = str(example)
 
         c = Counter(self._split_by_several_separators(example))

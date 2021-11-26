@@ -4,8 +4,9 @@ tokenizer:
   unk_token: '[UNK]'
 pre_tokenizer:
   _target_: tokenizers.pre_tokenizers.Split
+  pattern: $@@$
   behavior: removed
-sep_token: $@@$
+chunksize: 1
 trainer:
   _convert_: partial
   _target_: tokenizers.trainers.BpeTrainer

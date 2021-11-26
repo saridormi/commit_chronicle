@@ -9,8 +9,6 @@ class DiffFilter:
     Class to remove unchanged lines from diffs.
     """
 
-    fname_pattern = "^(?:\/?[\w\-_]+\/)*?(?:[\w\-_]*\.[\w\-_]+?)*?$"
-
     def __call__(self, diff: str) -> str:
         """
         This method preprocessed single diff string.
@@ -23,7 +21,8 @@ class DiffFilter:
 
         for line in diff_lines:
             if line.startswith("@@"):
-                line = line.split("@@")[-1].strip()
+                line = line.split("@@")[-1]
+            line = line.strip()
 
             if line.startswith("new file"):
                 # line in git diff when file was created
@@ -45,12 +44,12 @@ class DiffFilter:
                 # example: copy from <old_filename>, copy to <new_filename>
                 processed_lines.append(line)
 
-            elif line.startswith("-") and len(line.strip()) > 1:
+            elif line.startswith("-") and len(line.replace(" ", "").strip("-")) > 1:
                 # lines that were removed
                 # example: - version='2.0.2', -version='2.0.2'
                 processed_lines.append(line)
 
-            elif line.startswith("+") and len(line.strip()) > 1:
+            elif line.startswith("+") and len(line.replace(" ", "").strip("+")) > 1:
                 # lines that were added
                 # example: + version='2.0.2', +version='2.0.2
                 processed_lines.append(line)
@@ -59,9 +58,9 @@ class DiffFilter:
                 # example: Binary files <filename1> and <filename2> differ
                 processed_lines.append(line)
 
-            elif len(line.strip()) > 0 and (re.match(self.fname_pattern, line, flags=re.MULTILINE)):
+            elif len(line) > 1 and len(line.split()) == 1 and re.match("^[\w\.\/]+$", line):
                 # filename header
-                processed_lines.append(f"<FNAME>{line}")
+                processed_lines.append(line)
 
         processed_diff = "\n".join(processed_lines)
         processed_diff = re.sub(r" +", " ", processed_diff)
