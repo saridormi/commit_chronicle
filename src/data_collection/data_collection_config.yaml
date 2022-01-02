@@ -2,7 +2,7 @@ repo_processor:
   chunksize: 1000
 pydriller_kwargs:
   only_no_merge: true
-num_workers: 4
+n_workers: 4
 org_repo_sep: "#"
 paths:
   temp_clone_dir: temp

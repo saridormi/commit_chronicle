@@ -1,6 +1,5 @@
 import os
-import logging
-from typing import Optional, Callable, Dict, Any
+from typing import Optional, Dict, Any
 
 import gzip
 from configparser import NoOptionError
@@ -8,7 +7,7 @@ from tqdm import tqdm
 
 from pydriller import Modification, Commit, RepositoryMining
 
-from ..base_utils import FileProcessor
+from ..base_utils import BaseProcessor
 
 
 class CommitProcessor:
@@ -48,19 +47,11 @@ class CommitProcessor:
         return res
 
 
-class RepoProcessor(FileProcessor):
-    def __init__(self, temp_clone_dir: str, output_dir: str, chunksize: int, logger_f: Optional[Callable] = None):
-        super(RepoProcessor, self).__init__(chunksize)
+class RepoProcessor(BaseProcessor):
+    def __init__(self, temp_clone_dir: str, output_dir: str, chunksize: int, logger_name: Optional[str] = None):
+        super(RepoProcessor, self).__init__(chunksize=chunksize, logger_name=logger_name)
         self._temp_clone_dir = temp_clone_dir
         self._output_dir = output_dir
-        self._logger_f = logger_f
-
-    def log(self, msg: str, level: int):
-        if self._logger_f:
-            logger = self._logger_f()
-        else:
-            logger = logging.getLogger(name=None)
-        logger.log(msg=msg, level=level)
 
     def process_repo(self, repo_name, repo_url, **repo_kwargs):
         """
@@ -78,14 +69,14 @@ class RepoProcessor(FileProcessor):
 
         # read already cloned repos from disk
         if repo_url.split("/")[-1].replace(".git", "") in os.listdir(self._temp_clone_dir):
-            self.log(f"[{repo_name}] Already cloned", 10)
+            self.logger.debug(f"[{repo_name}] Already cloned")
             repo = RepositoryMining(
                 f'{self._temp_clone_dir}/{repo_url.split("/")[-1].replace(".git", "")}', **repo_kwargs
             )
         else:
             repo = RepositoryMining(repo_url, clone_repo_to=self._temp_clone_dir, **repo_kwargs)
 
-        self.log(f"[{repo_name}] Start processing", 20)
+        self.logger.info(f"[{repo_name}] Start processing")
 
         self._prepare_outfile(out_fname)
 
@@ -95,29 +86,29 @@ class RepoProcessor(FileProcessor):
                 try:
                     cur_data = CommitProcessor.process_commit(commit)
                 except (AttributeError, NoOptionError) as e:
-                    self.log(f"[{repo_name}] {e} with {commit.hash}", 40)
+                    self.logger.error(f"[{repo_name}] {e} with {commit.hash}")
                     continue
 
                 commits_data.append(cur_data)
 
                 if len(commits_data) >= self._chunksize:
-                    self.log(f"[{repo_name}] Processed more than {self._chunksize} commits, writing to file", 10)
+                    self.logger.debug(f"[{repo_name}] Processed more than {self._chunksize} commits, writing to file")
                     self._append_to_outfile(commits_data, out_fname)
                     commits_data = []
         except Exception as e:  # sometimes random errors can happen during cloning (e.g. if repo was deleted)
-            self.log(f"[{repo_name}] Couldn't clone; {e}", 40)
+            self.logger.error(f"[{repo_name}] Couldn't clone; {e}")
             return
 
         if len(commits_data) > 0:
-            self.log(f"[{repo_name}] Final writing to file", 10)
+            self.logger.debug(f"[{repo_name}] Final writing to file")
             self._append_to_outfile(commits_data, out_fname)
 
-        self.log(f"[{repo_name}] Zipping file", 10)
+        self.logger.debug(f"[{repo_name}] Zipping file")
         with open(out_fname, "rb") as f_in, gzip.open(out_fname + ".gz", "wb") as f_out:
             f_out.writelines(f_in)
         os.remove(out_fname)
 
-        self.log(f"[{repo_name}] Finish processing", 20)
+        self.logger.info(f"[{repo_name}] Finish processing")
 
     def unite_files(self, out_fname: str):
         """
@@ -145,4 +136,4 @@ class RepoProcessor(FileProcessor):
 
                 cur_idx += cur_len
             except ValueError as e:
-                self.log(f"[{repo_name}] Couldn't read; {e}", 40)
+                self.logger.error(f"[{repo_name}] Couldn't read; {e}")

@@ -1,0 +1,28 @@
+base_args:
+  chunksize: 1000
+  n_workers: 4
+  logger_name: process_data
+
+outliers_processor:
+  run_anyway: false
+  args:
+    lower_percentile: 0.01
+    upper_percentile: 0.95
+
+pre_deduplication_processor:
+  run_anyway: false
+
+post_deduplication_processor:
+  run_anyway: false
+
+message_processor:
+  run_anyway: false
+
+diff_processor:
+  run_anyway: false
+
+clones_ready: true
+paths:
+  input_dir: extracted_data_jsonl
+  percentile_dir: percentiles
+  deduplication_dir: deduplication
