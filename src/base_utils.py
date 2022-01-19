@@ -80,7 +80,7 @@ class BaseProcessor:
         """
         pass
 
-    def process(self, chunk: pd.DataFrame, **kwargs) -> Union[pd.DataFrame, List[str], Dict[str, Any]]:
+    def process(self, chunk: pd.DataFrame, **kwargs) -> Union[pd.DataFrame, List[str], List[Dict[str, Any]]]:
         """
         This method should implement chunk processing logic.
 
@@ -98,7 +98,7 @@ class BaseProcessor:
             - in_fname: path to read input data from
             - out_fname: path to save processed data to
         """
-        prepare_kwargs = {key.strip("prepare_"): value for key, value in kwargs.items() if key.startswith("prepare_")}
+        prepare_kwargs = {key[len("prepare_") :]: value for key, value in kwargs.items() if key.startswith("prepare_")}
         process_kwargs = {key: value for key, value in kwargs.items() if not key.startswith("prepare_")}
 
         self.logger.info(f"Starting processing {in_fname}")

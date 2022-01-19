@@ -1,4 +1,5 @@
 import re
+import nltk
 import os
 import json
 import hashlib
@@ -44,46 +45,52 @@ class OutliersProcessor(BaseProcessor):
         self._diff_percentiles: Dict[float, float] = {}
         self._message_percentiles: Dict[float, float] = {}
 
-    def _get_n_tokens_str(self, id: int, string: str) -> str:
+    def _get_n_tokens_str(self, string: str) -> int:
         """
-        This method tokenizes given string and returns string with id and # of tokens.
+        This method tokenizes given string and returns # of tokens.
 
-        Currently tokenization is performed simply by splitting on whitespaces.
+        TODO:
+        Currently previous behavior is reproduced by using nltk.wordpunct_tokenize, but it might be reasonable to
+        simply split by whitespaces.
+        """
+        return len(nltk.wordpunct_tokenize(string))
+
+    def _get_n_tokens_msg(self, id: int, msg: str) -> str:
+        """
+        This method tokenizes given message and returns string with id and # of tokens.
         """
         try:
-            return f"{id},{len(string.split())}\n"
-        except TypeError:
-            self.logger.warning(f"TypeError with {id}")
+            return f"{id},{self._get_n_tokens_str(msg)}\n"
+        except TypeError as e:
+            self.logger.warning(f"TypeError {e} with {id}")
             return f"{id},-1\n"
 
-    def _mods_to_str(self, mods: List[Dict[str, str]]) -> Optional[str]:
+    def _get_n_tokens_mods(self, id: int, mods: List[Dict[str, str]]) -> str:
         """
-        This method constructs single diff from all file modifications in one commit.
-
-        Currently previous behavior is reproduced by skipping UNKNOWN modifications and adding header
-         of the same format I used before, but I think it would be more reasonable to not consider filenames at all at
-         this stage.
+        This method tokenizes each diff in commit modifications and returns string with id and # of tokens.
         """
-        commit_diff = []
-        for mod in mods:
-            if mod["change_type"] == "UNKNOWN":
-                continue
 
-            if mod["change_type"] == "ADD":
-                file_diff = f"new file {mod['new_path']}\n"
-            elif mod["change_type"] == "DELETE":
-                file_diff = f"deleted file {mod['old_path']}\n"
-            elif mod["change_type"] == "RENAME":
-                file_diff = f"rename from {mod['old_path']}\nrename to {mod['new_path']}\n"
-            elif mod["change_type"] == "COPY":
-                file_diff = f"copy from {mod['old_path']}\ncopy to {mod['new_path']}\n"
-            else:
-                file_diff = f"{mod['new_path']}\n"
-
-            file_diff += mod["diff"]
-            commit_diff.append(file_diff)
-
-        return " ".join(commit_diff)
+        try:
+            n_tokens = 0
+            for mod in mods:
+                if mod["change_type"] == "UNKNOWN":
+                    continue
+                if mod["change_type"] == "ADD":
+                    file_diff = f"new file {mod['new_path']}\n"
+                elif mod["change_type"] == "DELETE":
+                    file_diff = f"deleted file {mod['old_path']}\n"
+                elif mod["change_type"] == "RENAME":
+                    file_diff = f"rename from {mod['old_path']}\nrename to {mod['new_path']}\n"
+                elif mod["change_type"] == "COPY":
+                    file_diff = f"copy from {mod['old_path']}\ncopy to {mod['new_path']}\n"
+                else:
+                    file_diff = f"{mod['new_path']}\n"
+                n_tokens += self._get_n_tokens_str(file_diff)
+                n_tokens += self._get_n_tokens_str(mod["diff"])
+            return f"{id},{n_tokens}\n"
+        except TypeError as e:
+            self.logger.warning(f"TypeError {e} with {id}")
+            return f"{id},-1\n"
 
     def _get_n_tokens(self, in_fname: str, n_tokens_dir: str):
         """
@@ -95,17 +102,21 @@ class OutliersProcessor(BaseProcessor):
         """
         self.logger.info(f"Starting processing # tokens in {in_fname}")
 
+        open(os.path.join(n_tokens_dir, "n_tokens_diff.txt"), "w", encoding="utf-8").close()
+        open(os.path.join(n_tokens_dir, "n_tokens_message.txt"), "w", encoding="utf-8").close()
+
         reader = self._read_input(in_fname)
         for chunk in tqdm(reader, desc=f"Tokenizing {in_fname}", leave=False):
+
             with Parallel(self._n_workers) as pool:
                 # calculate # tokens in diffs from current chuck
                 diff_res = pool(
-                    delayed(self._get_n_tokens_str)(item["id"], self._mods_to_str(item["mods"]))
+                    delayed(self._get_n_tokens_mods)(item["id"], item["mods"])
                     for _, item in chunk[["id", "mods"]].iterrows()
                 )
                 # calculate # tokens in messages from current chuck
                 message_res = pool(
-                    delayed(self._get_n_tokens_str)(item["id"], item["message"])
+                    delayed(self._get_n_tokens_msg)(item["id"], item["message"])
                     for _, item in chunk[["id", "message"]].iterrows()
                 )
             # append results from current chunk to target files
@@ -128,18 +139,14 @@ class OutliersProcessor(BaseProcessor):
         with open(os.path.join(n_tokens_dir, "n_tokens_diff.txt"), "r") as file:
             for line in file:
                 id, n_tokens = (int(i) for i in line.strip().split(","))
-                if n_tokens == -1:
-                    self._ids_to_drop.add(id)
-                else:
+                if n_tokens != -1:
                     diff_n_tokens.append(n_tokens)
 
         message_n_tokens = []
         with open(os.path.join(n_tokens_dir, "n_tokens_message.txt"), "r") as file:
             for line in file:
                 id, n_tokens = (int(i) for i in line.strip().split(","))
-                if n_tokens == -1:
-                    self._ids_to_drop.add(id)
-                else:
+                if n_tokens != -1:
                     message_n_tokens.append(n_tokens)
 
         for q in [0.01, 0.05, 0.9, 0.95, 0.99]:
@@ -161,19 +168,25 @@ class OutliersProcessor(BaseProcessor):
         Args:
             - n_tokens_dir: path to directory to read # of tokens from
         """
+        self._ids_to_drop = set()
+
         with open(os.path.join(n_tokens_dir, "n_tokens_diff.txt"), "r") as file:
             for line in file:
                 id, n_tokens = (int(i) for i in line.strip().split(","))
                 if (
-                    n_tokens < self._diff_percentiles[self._lower_percentile]
-                    or n_tokens > self._diff_percentiles[self._upper_percentile]
-                ) or (self._diff_upper_bound and n_tokens > self._diff_upper_bound):
+                    (n_tokens == -1)
+                    or (
+                        n_tokens < self._diff_percentiles[self._lower_percentile]
+                        or n_tokens > self._diff_percentiles[self._upper_percentile]
+                    )
+                    or (self._diff_upper_bound and n_tokens > self._diff_upper_bound)
+                ):
                     self._ids_to_drop.add(id)
 
         with open(os.path.join(n_tokens_dir, "n_tokens_message.txt"), "r") as file:
             for line in file:
                 id, n_tokens = (int(i) for i in line.strip().split(","))
-                if (
+                if (n_tokens == -1) or (
                     n_tokens < self._message_percentiles[self._lower_percentile]
                     or n_tokens > self._message_percentiles[self._upper_percentile]
                 ):
@@ -194,7 +207,10 @@ class OutliersProcessor(BaseProcessor):
              - percentile_dir: (optional) path to directory with already computed percentiles; might be useful for
                 dropping outliers from val/test by using percentiles from train, which has much more examples
         """
-        self._get_n_tokens(in_fname=in_fname, n_tokens_dir=n_tokens_dir)
+        if "n_tokens_diff.txt" not in os.listdir(n_tokens_dir) or "n_tokens_message.txt" not in os.listdir(
+            n_tokens_dir
+        ):
+            self._get_n_tokens(in_fname=in_fname, n_tokens_dir=n_tokens_dir)
 
         if percentile_dir:
             # read precomputed percentiles
@@ -233,6 +249,9 @@ class PreDeduplicationProcessor(BaseProcessor):
 
         We don't want to consider filenames when running duplicates search on diffs, so `old_path`/`new_path`/`change_type`
         fields are ignored.
+
+        TODO:
+        Currently previous behavior is reproduced by skipping UNKNOWN modifications.
         """
         return " ".join(mod["diff"] for mod in mods if mod["change_type"] != "UNKNOWN")
 
@@ -272,7 +291,7 @@ class PreDeduplicationProcessor(BaseProcessor):
     def _preprocess_single_diff(self, cur_id: int, cur_example: List[Dict[str, str]]) -> str:
         """
         This method preprocesses diffs, which currently includes the following:
-            - cast to lowercase
+            - remove filenames and '@@ -0,0 +1 @@'-like git stuff
         """
         try:
             processed_example = self._get_diff_from_mods(cur_example)
@@ -285,7 +304,7 @@ class PreDeduplicationProcessor(BaseProcessor):
     def _preprocess_single_msg(self, cur_id: int, cur_example: str) -> str:
         """
         This method preprocesses messages, which currently includes the following:
-            - remove filenames and '@@ -0,0 +1 @@'-like git stuff
+            - cast to lowercase
         """
         try:
             processed_example = cur_example.lower()
@@ -335,7 +354,7 @@ class PostDeduplicationProcessor(BaseProcessor):
         self._train_full_clones: Set[str] = set()
         self._ids_to_drop: Set[int] = set()
 
-    def _extract_metadata(self, input_fname: str, deduplication_dir: str):
+    def _extract_metadata(self, in_path: str, deduplication_dir: str):
         """
         This method saves commits metadata (author, timestamp, repo, hash) from main dataset files into separate
         files.
@@ -350,7 +369,7 @@ class PostDeduplicationProcessor(BaseProcessor):
             part_out_fname = os.path.join(deduplication_dir, f"{part}_metadata")
             self._prepare_outfile(part_out_fname)
 
-            reader = self._read_input(f"{part}_{input_fname}")
+            reader = self._read_input(os.path.join(in_path, f"{part}.jsonl"))
 
             for chunk in tqdm(reader, desc=f"Iterating over {part} to extract metadata"):
                 chunk["project_id"] = i + 1
@@ -391,30 +410,36 @@ class PostDeduplicationProcessor(BaseProcessor):
         with open(in_fname, "r") as file:
             for i, line in tqdm(enumerate(file), desc=f"Iterating over {in_fname} to add metadata"):
                 pr_1, s_1, pr_2, s_2 = (int(j) for j in line.strip().split(","))
-                ex1 = data[indexes[(pr_1, s_1)]]
-                ex2 = data[indexes[(pr_2, s_2)]]
+                try:
+                    ex1 = data[indexes[(pr_1, s_1)]]
+                    ex2 = data[indexes[(pr_2, s_2)]]
 
-                metadata.append(
-                    {
-                        "part_id1": ex1[sorted_cols["project_id"]],
-                        "id1": ex1[sorted_cols["id"]],
-                        "repo1": ex1[sorted_cols["repo"]],
-                        "hash1": ex1[sorted_cols["hash"]],
-                        "part_id2": ex2[sorted_cols["project_id"]],
-                        "id2": ex2[sorted_cols["id"]],
-                        "repo2": ex2[sorted_cols["repo"]],
-                        "hash2": ex2[sorted_cols["hash"]],
-                    }
-                )
+                    metadata.append(
+                        {
+                            "part_id1": ex1[sorted_cols["project_id"]],
+                            "id1": ex1[sorted_cols["id"]],
+                            "repo1": ex1[sorted_cols["repo"]],
+                            "hash1": ex1[sorted_cols["hash"]],
+                            "part_id2": ex2[sorted_cols["project_id"]],
+                            "id2": ex2[sorted_cols["id"]],
+                            "repo2": ex2[sorted_cols["repo"]],
+                            "hash2": ex2[sorted_cols["hash"]],
+                        }
+                    )
+                # TODO: in normal case, KeyErrors shouldn't appear here
+                except KeyError:
+                    self.logger.error(
+                        f"KeyError with project_id {pr_1} and id {s_1} (pair: project_id {pr_2} and id {s_2})"
+                    )
 
                 if i % self._chunksize == 0:
                     with jsonlines.open(out_fname, mode="a") as writer:
-                        writer.writeall(metadata)
+                        writer.write_all(metadata)
                     metadata = []
 
         if len(metadata) > 0:
             with jsonlines.open(out_fname, mode="a") as writer:
-                writer.writeall(metadata)
+                writer.write_all(metadata)
 
     def _get_full_clones(self, msg_clones_fname: str, diff_clones_fname: str, out_fname: str):
         """
@@ -456,24 +481,27 @@ class PostDeduplicationProcessor(BaseProcessor):
         self._ids_to_drop = set(int(pair.split(",")[1]) for pair in self._train_full_clones)
         self.logger.info(f"Got {len(self._ids_to_drop)} clones ids to drop")
 
-    def prepare(self, in_fname: str, msg_clones_fname: str, diff_clones_fname: str, deduplication_dir: str):
-        self._extract_metadata(in_fname, deduplication_dir)
+    def prepare(
+        self, in_fname: str, in_path: str, msg_clones_fname: str, diff_clones_fname: str, deduplication_dir: str
+    ):
+
+        self._extract_metadata(in_path, deduplication_dir)
 
         self._add_metadata(
-            in_fname=msg_clones_fname,
-            out_fname=f"{msg_clones_fname.split('.')[0]}_metadata.txt",
+            in_fname=os.path.join(deduplication_dir, msg_clones_fname),
+            out_fname=os.path.join(deduplication_dir, f"{msg_clones_fname.split('.')[0]}_metadata.txt"),
             deduplication_dir=deduplication_dir,
         )
 
         self._add_metadata(
-            in_fname=diff_clones_fname,
-            out_fname=f"{diff_clones_fname.split('.')[0]}_metadata.txt",
+            in_fname=os.path.join(deduplication_dir, diff_clones_fname),
+            out_fname=os.path.join(deduplication_dir, f"{diff_clones_fname.split('.')[0]}_metadata.txt"),
             deduplication_dir=deduplication_dir,
         )
 
         self._get_full_clones(
-            msg_clones_fname=f"{msg_clones_fname.split('.')[0]}_metadata.txt",
-            diff_clones_fname=f"{diff_clones_fname.split('.')[0]}_metadata.txt",
+            msg_clones_fname=os.path.join(deduplication_dir, f"{msg_clones_fname.split('.')[0]}_metadata.txt"),
+            diff_clones_fname=os.path.join(deduplication_dir, f"{diff_clones_fname.split('.')[0]}_metadata.txt"),
             out_fname=os.path.join(deduplication_dir, "full_clones_metadata.txt"),
         )
 
@@ -562,23 +590,22 @@ class MessageProcessor(BaseProcessor):
 
     @staticmethod
     def _filter(message: str) -> str:
-        try:
-            x = MessageProcessor._filter_emails(message)
-            x = MessageProcessor._filter_urls(x)
-            x = MessageProcessor._filter_issue_ref(x)
-            x = MessageProcessor._filter_signature(x)
-            x = MessageProcessor._filter_at_pattern(x)
-            x = MessageProcessor._filter_sha(x)
-            x = x.strip()
-        except TypeError:
-            x = ""
+        if not isinstance(message, str) or not message.isascii():
+            return ""
+
+        x = MessageProcessor._filter_emails(message)
+        x = MessageProcessor._filter_urls(x)
+        x = MessageProcessor._filter_issue_ref(x)
+        x = MessageProcessor._filter_signature(x)
+        x = MessageProcessor._filter_at_pattern(x)
+        x = MessageProcessor._filter_sha(x)
+        x = x.strip()
         return x
 
     def process(self, chunk: pd.DataFrame) -> pd.DataFrame:
         with Parallel(self._n_workers) as pool:
             filtered_messages = pool(
-                delayed(MessageProcessor._filter(message) if isinstance(message, str) and message.isascii() else "")
-                for _, message in chunk["message"].items()
+                delayed(MessageProcessor._filter)(message) for _, message in chunk["message"].items()
             )
 
         chunk["message"] = filtered_messages
@@ -634,7 +661,7 @@ class DiffProcessor(BaseProcessor):
 
     def process(self, chunk: pd.DataFrame, **kwargs) -> pd.DataFrame:
         with Parallel(self._n_workers) as pool:
-            filtered_mods = pool(delayed(self._filter_mods(mods)) for _, mods in chunk["mods"].items())
+            filtered_mods = pool(delayed(self._filter_mods)(mods) for _, mods in chunk["mods"].items())
 
         chunk["mods"] = filtered_mods
         return chunk
