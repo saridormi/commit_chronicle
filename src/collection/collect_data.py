@@ -7,10 +7,10 @@ from hydra.utils import to_absolute_path
 from omegaconf import DictConfig
 from joblib import Parallel, delayed
 
-from src.data_collection.utils import RepoProcessor
+from src.collection.utils import RepoProcessor
 
 
-@hydra.main(config_path=".", config_name="data_collection_config")
+@hydra.main(config_path=".", config_name="config")
 def main(cfg: DictConfig) -> None:
     for key in cfg.paths:
         cfg.paths[key] = to_absolute_path(cfg.paths[key])

@@ -5,7 +5,7 @@ import hydra
 from hydra.utils import to_absolute_path
 from omegaconf import DictConfig
 
-from src.data_processing.utils import (
+from src.processing.utils import (
     OutliersProcessor,
     PreDeduplicationProcessor,
     PostDeduplicationProcessor,
@@ -14,7 +14,7 @@ from src.data_processing.utils import (
 )
 
 
-@hydra.main(config_path=".", config_name="data_processing_config")
+@hydra.main(config_path=".", config_name="config")
 def main(cfg: DictConfig) -> None:
     for key in cfg.paths:
         cfg.paths[key] = to_absolute_path(cfg.paths[key])

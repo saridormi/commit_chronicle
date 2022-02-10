@@ -29,10 +29,10 @@ message_processor:
     logger_name: message_processor
 
 diff_processor:
-  run_anyway: false
+  run_anyway: true
   args:
-    chunksize: 512
-    n_workers: 4
+    chunksize: 2000
+    n_workers: 16
     logger_name: diff_processor
 
 clones_ready: true

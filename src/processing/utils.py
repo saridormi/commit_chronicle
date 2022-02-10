@@ -107,7 +107,6 @@ class OutliersProcessor(BaseProcessor):
 
         reader = self._read_input(in_fname)
         for chunk in tqdm(reader, desc=f"Tokenizing {in_fname}", leave=False):
-
             with Parallel(self._n_workers) as pool:
                 # calculate # tokens in diffs from current chuck
                 diff_res = pool(
@@ -519,7 +518,7 @@ class MessageProcessor(BaseProcessor):
 
     @staticmethod
     def _filter_emails(message: str) -> str:
-        return re.sub(r"(?!:^|\s)[\w.-]*@(?=[a-z\d][^.]*\.)[a-z\d.-]*[^.]", "", message)
+        return re.sub(r"(?!:^|\s)[\w+.-]+@(?=[a-z\d][^.]*\.)[a-z\d.-]*[^.]", "", message)
 
     @staticmethod
     def _filter_urls(message: str) -> str:
@@ -623,6 +622,7 @@ class DiffProcessor(BaseProcessor):
         Currently filtering for diffs includes the following:
             - removing some unnecessary git stuff (e.g. @@ ... @@)
             - removing non-changed lines
+            - removing extra \t and \r symbols
         """
         diff_lines = diff.split("\n")
         processed_lines = []
@@ -645,7 +645,7 @@ class DiffProcessor(BaseProcessor):
                 processed_lines.append(line)
 
         processed_diff = "\n".join(processed_lines)
-        processed_diff = re.sub(" +", " ", processed_diff)
+        processed_diff = re.sub("[^\S\n]+", " ", processed_diff)
         return processed_diff
 
     def _filter_mods(self, mods: List[Dict[str, str]]) -> List[Dict[str, str]]:

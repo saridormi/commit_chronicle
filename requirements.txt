@@ -1,6 +1,17 @@
+# data collection
 PyDriller==1.15.5
+
+# data processing
 pandas==1.3.1
-tqdm==4.62.1
 nltk==3.6.4
+
+# tokenization
 pygments==2.10.0
 tokenizers==0.9.4
+transformers==4.2.1
+
+# utils
+tqdm==4.62.1
+hydra-core==1.1.1
+jsonlines
+sklearn
