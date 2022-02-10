@@ -1,24 +1,24 @@
 import hydra
 import os
+import logging
 from hydra.utils import to_absolute_path
-from omegaconf import DictConfig, OmegaConf
-from src.tokenization.utils import TrainingProcessor
+from omegaconf import DictConfig
+from src.tokenization.data_tokenization_utils import TrainingProcessor
 
 
-@hydra.main(config_path="configs", config_name="tokenization_config")
+@hydra.main(config_path=".", config_name="data_tokenization_config")
 def main(cfg: DictConfig) -> None:
-    cfg.training_processor.diff_tokenizer_name_or_path = to_absolute_path(
-        cfg.training_processor.diff_tokenizer_name_or_path
-    )
-    for path in cfg.paths:
-        cfg.paths[path] = to_absolute_path(cfg.paths[path])
-    print(OmegaConf.to_yaml(cfg))
-    processor = TrainingProcessor(**cfg.training_processor)
+    for key in cfg.paths:
+        cfg.paths[key] = to_absolute_path(cfg.paths[key])
 
+    logging.info("======= Using config =======")
+    logging.info(cfg)
+
+    processor = TrainingProcessor(**cfg.training_processor, diff_tokenizer_path=cfg.paths.diff_tokenizer_path)
     for part in ["train", "val", "test", "val_original", "test_original"]:
         processor(
-            input_filename=os.path.join(cfg.paths.input_root_dir, f"{part}_final.csv"),
-            output_dir=cfg.paths.output_root_dir,
+            input_fname=os.path.join(cfg.paths.input_dir, "lexed", f"{part}.jsonl"),
+            output_dir=cfg.paths.output_dir,
             part=part,
         )
 

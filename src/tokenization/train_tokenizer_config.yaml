@@ -1,0 +1,23 @@
+lexer:
+  upper_percentile: 0.95
+  sep_token: 月
+  chunksize: 16000
+  n_workers: 16
+  logger_name: lexer
+tokenizer:
+  _target_: tokenizers.models.BPE
+  dropout: 0.5
+  unk_token: '[UNK]'
+pre_tokenizer:
+  _target_: tokenizers.pre_tokenizers.CharDelimiterSplit
+  delimiter: 月
+trainer:
+  _convert_: all
+  _target_: tokenizers.trainers.BpeTrainer
+  special_tokens: ['[UNK]', '[CLS]', '[SEP]', '[PAD]', '[MASK]', '\n']
+fnames:
+  - extracted_data_jsonl/lexed_diffs_only/train_100k.txt
+paths:
+  input_dir: extracted_data_jsonl
+  tokenizer_dir: tokenizer
+  percentile_dir: literals_len
