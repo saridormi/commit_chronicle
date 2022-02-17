@@ -4,6 +4,7 @@ import logging
 from hydra.utils import instantiate, to_absolute_path
 from omegaconf import DictConfig
 from tokenizers import Tokenizer
+from tokenizers.pre_tokenizers import Sequence, WhitespaceSplit
 from tokenizers.processors import TemplateProcessing
 from src.tokenization.train_tokenizer_utils import Lexer
 
@@ -32,7 +33,6 @@ def main(cfg: DictConfig) -> None:
         lexer = Lexer(**cfg.lexer)
         for part in ["train", "val", "test", "val_original", "test_original"]:
             part_fname = os.path.join(cfg.paths.input_dir, "lexed_diffs_only", f"{part}.txt")
-
             os.makedirs(os.path.join(cfg.paths.percentile_dir, part), exist_ok=True)
 
             percentile_dir = None
@@ -55,7 +55,7 @@ def main(cfg: DictConfig) -> None:
     # --------------------------------
 
     tokenizer = Tokenizer(instantiate(cfg.tokenizer))
-    tokenizer.pre_tokenizer = instantiate(cfg.pre_tokenizer)
+    tokenizer.pre_tokenizer = Sequence([instantiate(cfg.pre_tokenizer), WhitespaceSplit()])
     tokenizer.post_processor = TemplateProcessing(
         single="[CLS] $A [SEP]",
         pair="[CLS] $A [SEP] $B:1 [SEP]:1",

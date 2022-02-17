@@ -57,7 +57,7 @@ class Lexer(BaseProcessor):
         """
         This method iterates over all modifications in current commit and tokenizes each of them.
         """
-        tokens = []
+        tokens: List[str] = []
 
         for mod in cur_mods:
             if mod["change_type"] == "UNKNOWN":
@@ -79,14 +79,14 @@ class Lexer(BaseProcessor):
                 fname = mod["new_path"]
 
             mod_tokenized = self._lex_diff(cur_id, fname, mod["diff"])
-            tokens.extend(file_diff.split())
+            tokens.extend((token.strip() for token in file_diff.split()))
             tokens.extend(
-                [
-                    lexeme[1]
+                (
+                    lexeme[1].strip()
                     for lexeme in mod_tokenized
                     if lexeme[0] not in Literal
                     or (lexeme[0] in Literal and len(lexeme[1]) > self._percentiles[self._upper_percentile])
-                ]
+                )
             )
 
         return self._sep.join(tokens)
