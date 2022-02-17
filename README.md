@@ -2,15 +2,16 @@
 
 ![GitHub](https://img.shields.io/github/license/saridormi/commits_dataset?style=for-the-badge)
 
-> :exclamation: WARNING: I've changed a lot recently and readme is not really up to date yet
-
 This repository contains code for collecting and filtering data about commits from open source GitHub repos.
 
 ## Table of contents
 - [Ready-to-use dataset](#ready-to-use-dataset)
 - [How to use data collection code](#how-to-use-data-collection-code)
+- [How to use data processing code](#how-to-use-data-processing-code)
 
 ## Ready-to-use dataset 
+
+> :exclamation: This section is about **old** dataset, current data format is different.
 
 Dataset is currently available **only to JetBrains employees** at [Google Drive](https://drive.google.com/drive/folders/1Z3LgzG23KcZGln53ta4WVKBPp0S8_XhZ?usp=sharing).
 
@@ -80,20 +81,96 @@ Follow these steps:
 
 2. **Install dependencies**
 
-    For data collection you need Python 3.8 and [PyDriller](https://github.com/ishepard/pydriller)
+   ```
+   pip install -r requirements.txt
+   ``` 
+   
 
-      *(Note: latest version seems to differ a lot from the one I used, so make sure to install `1.15.5`)*
+3. **Provide repos to collect data from**
 
-3. **Choose repos to collect data from**
+    We used [GitHub Search](https://arxiv.org/abs/2103.04682) to select repositories that meet several criteria *(you can look through [`choosing_repos.ipynb`](https://github.com/saridormi/commits_dataset/blob/gather_by_hash/notebooks/multilang/choosing_repos.ipynb) for more information on our specific criteria)*.
 
-    We used [GitHub Search](https://arxiv.org/abs/2103.04682) to select repositories that meet several criteria *(you can look through `choosing_repos.ipynb` for any language in `notebooks` folder for more information on our specific criteria)*.
+    <details>
+    <summary>:yellow_heart: click here for more information about expected data format</summary>
 
-    You can choose repositories however you like, just provide two files: with repos URLs *(e.g. `https://github.com/saridormi/commits_dataset.git`)* and with repos names *(or something that you want to be used to name directories)*.
-    
-4. **Collect data**
+    The script expects data to be stored in the following way:
 
-    To collect data, run the following command:
+   ```
+         ├── ...  # data directory
+         │   ├── part_1
+         │   │    ├── repo_1.json
+         │   │    ├── ...
+         │   │    └── repo_n.json
+         │   ├── ...
+         │   └── part_k
+         └── ...
+   ```
+   Repositories are pre-split on parts *(in our case, train/val/test)*.
+
+   Information about each repo is stored in its own json file and should include the following keys:
+   - `"repo"`: full repository name
+   - `"url"`: repository URL
+   - `"hashes"`: hashes of specific commits; only these commits are collected
+   
+   An example:
+
+   ```
+      {
+         "repo": "saridormi/commits_dataset", 
+         "url": "https://github.com/saridormi/commits_dataset.git",
+         "hashes": ["78e474ecb3eba12b7a100b431d24ae85adca7a6d"]
+      }
+   ```
+   </details>
+
+4. **Define configuration**
+
+      Configuration is defined at [`src/collection/config.yaml`](https://github.com/saridormi/commits_dataset/blob/gather_by_hash/src/collection/config.yaml).
+
+      <details>
+      <summary>:yellow_heart: click here for more information about possible options</summary>
+   
+      Basically, config looks like that:
+
+      ```
+      repo_processor:
+         chunksize: ...
+      pydriller_kwargs:
+        ...
+      n_workers: ...
+      org_repo_sep: ...
+      parts: ...
+      paths: ...
+          temp_clone_dir: ...
+          input_dir: ...
+          output_dir: ...
+      ```
+   
+      * `repo_processor`
+        * `chunksize`: # of examples in single chunk
+
+      * `pydriller_kwargs`
+      
+        All options from here are passed to PyDriller's `RepositoryMining` as kwargs. See [PyDriller docs](https://pydriller.readthedocs.io/en/1.15/reference.html#pydriller.repository_mining.RepositoryMining) for more information.
+      
+      * `n_workers`: # of threads for parallel data gathering
+      * `org_repo_sep`: symbol to replace `/` in `"org/repo"`
+      * `parts`: folder names for parts repositories are pre-split on
+      * `paths`:
+      
+        Paths are moved to separate key to convert them all to absolute paths via hydra.
+        * `temp_clone_dir`: directory remote repos will be cloned to
+        * `input_dir`: directory to read data about repos from
+        * `output_dir`: directory to save gathered data to
+        </details>
+
+5. **Collect data**
+
+    To start collecting data, run the following command:
     ```
-    python collect_data.py
+    python -m src.collection.collect_data
     ```
-    You can (and most likely should) use several command line arguments, add `-h` flag to command above to see more information.
+   
+## How to use data processing code
+
+> :star2: work in progress
