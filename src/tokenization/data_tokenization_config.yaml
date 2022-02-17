@@ -10,6 +10,12 @@ training_processor:
   msg_kwargs:
     truncation: true
     return_attention_mask: false
+parts:
+  - train
+  - val
+  - test
+  - val_original
+  - test_original
 paths:
   diff_tokenizer_path: tokenizer/diff_tokenizer.json
   input_dir: extracted_data_jsonl

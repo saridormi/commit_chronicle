@@ -1,7 +1,7 @@
 lexer:
   upper_percentile: 0.95
   sep_token: 月
-  chunksize: 16000
+  chunksize: 32000
   n_workers: 16
   logger_name: lexer
 tokenizer:
@@ -17,6 +17,12 @@ trainer:
   special_tokens: ['[UNK]', '[CLS]', '[SEP]', '[PAD]', '[MASK]', '\n']
 fnames:
   - extracted_data_jsonl/lexed_diffs_only/train_100k.txt
+parts:
+  - train
+  - val
+  - test
+  - val_original
+  - test_original
 paths:
   input_dir: extracted_data_jsonl
   tokenizer_dir: tokenizer

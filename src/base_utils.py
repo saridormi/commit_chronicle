@@ -42,7 +42,7 @@ class BaseProcessor:
         """
         open(os.path.join(out_fname), mode="w").close()
 
-    def _append_to_outfile(self, data: List[Union[str, Dict[str, Any]]], out_fname: str):
+    def _append_to_outfile(self, data: Union[List[str], List[Dict[str, Any]]], out_fname: str):
         """
         Append current data chunk to chosen output format.
         """

@@ -15,7 +15,7 @@ def main(cfg: DictConfig) -> None:
     logging.info(cfg)
 
     processor = TrainingProcessor(**cfg.training_processor, diff_tokenizer_path=cfg.paths.diff_tokenizer_path)
-    for part in ["train", "val", "test", "val_original", "test_original"]:
+    for part in cfg.parts:
         processor(
             in_fname=os.path.join(cfg.paths.input_dir, "lexed", f"{part}.jsonl"),
             output_dir=cfg.paths.output_dir,

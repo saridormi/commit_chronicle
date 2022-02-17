@@ -1,4 +1,5 @@
 import os
+import json
 import logging
 import hydra
 
@@ -6,6 +7,7 @@ from hydra.utils import to_absolute_path
 from omegaconf import DictConfig
 
 from src.processing.utils import (
+    AuthorProcessor,
     OutliersProcessor,
     PreDeduplicationProcessor,
     PostDeduplicationProcessor,
@@ -24,12 +26,28 @@ def main(cfg: DictConfig) -> None:
     logging.info(cfg)
 
     # ---------------------------------
+    # -       convert authors         -
+    # ---------------------------------
+    os.makedirs(os.path.join(cfg.paths.input_dir, "converted_authors"), exist_ok=True)
+    processor = AuthorProcessor(**cfg.author_processor.args)
+    for part in cfg.parts:
+        if cfg.author_processor.run_anyway or f"{part}.jsonl" not in os.listdir(
+            os.path.join(cfg.paths.input_dir, "converted_authors")
+        ):
+            logging.info(f"Converting authors in {part}")
+
+            processor(
+                in_fname=os.path.join(cfg.paths.input_dir, f"{part}.jsonl"),
+                out_fname=os.path.join(cfg.paths.input_dir, "converted_authors", f"{part}.jsonl"),
+            )
+
+    # ---------------------------------
     # -         drop outliers         -
     # ---------------------------------
 
     os.makedirs(os.path.join(cfg.paths.input_dir, "filtered_outliers"), exist_ok=True)
     processor = OutliersProcessor(**cfg.outliers_processor.args)
-    for part in ["train", "val", "test", "val_original", "test_original"]:
+    for part in cfg.parts:
         if cfg.outliers_processor.run_anyway or f"{part}.jsonl" not in os.listdir(
             os.path.join(cfg.paths.input_dir, "filtered_outliers")
         ):
@@ -41,7 +59,7 @@ def main(cfg: DictConfig) -> None:
 
             os.makedirs(os.path.join(cfg.paths.percentile_dir, part), exist_ok=True)
             processor(
-                in_fname=os.path.join(cfg.paths.input_dir, f"{part}.jsonl"),
+                in_fname=os.path.join(cfg.paths.input_dir, "converted_authors", f"{part}.jsonl"),
                 out_fname=os.path.join(cfg.paths.input_dir, "filtered_outliers", f"{part}.jsonl"),
                 prepare_n_tokens_dir=os.path.join(cfg.paths.percentile_dir, part),
                 prepare_percentile_dir=percentile_dir,
@@ -51,7 +69,7 @@ def main(cfg: DictConfig) -> None:
     # - preprocess data into SourcererCC format -
     # -------------------------------------------
 
-    for part_id, part in enumerate(["train", "val", "test", "val_original", "test_original"]):
+    for part_id, part in enumerate(cfg.parts):
         processor = PreDeduplicationProcessor(**cfg.pre_deduplication_processor.args, project_id=part_id + 1)
         if cfg.pre_deduplication_processor.run_anyway or f"{part}_message.txt" not in os.listdir(
             os.path.join(cfg.paths.deduplication_dir, "raw")
@@ -92,6 +110,7 @@ def main(cfg: DictConfig) -> None:
             prepare_diff_clones_fname="results_messages_100_multi.pairs",
             prepare_msg_clones_fname="results_diffs_100_multi.pairs",
             prepare_deduplication_dir=cfg.paths.deduplication_dir,
+            prepare_parts=cfg.parts,
         )
 
     # -----------------------------------
@@ -99,7 +118,7 @@ def main(cfg: DictConfig) -> None:
     # -----------------------------------
 
     os.makedirs(os.path.join(cfg.paths.input_dir, "filtered_msgs"), exist_ok=True)
-    for part in ["train", "val", "test", "val_original", "test_original"]:
+    for part in cfg.parts:
         if cfg.message_processor.run_anyway or f"{part}.jsonl" not in os.listdir(
             os.path.join(cfg.paths.input_dir, "filtered_msgs")
         ):
@@ -118,7 +137,7 @@ def main(cfg: DictConfig) -> None:
     # -----------------------------------
 
     os.makedirs(os.path.join(cfg.paths.input_dir, "filtered_diffs"), exist_ok=True)
-    for part in ["train", "val", "test", "val_original", "test_original"]:
+    for part in cfg.parts:
         if cfg.diff_processor.run_anyway or f"{part}.jsonl" not in os.listdir(
             os.path.join(cfg.paths.input_dir, "filtered_diffs")
         ):

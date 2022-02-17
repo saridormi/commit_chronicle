@@ -13,6 +13,38 @@ from collections import Counter
 from ..base_utils import BaseProcessor
 
 
+class AuthorProcessor(BaseProcessor):
+    """
+    This class is used to convert authors' information gathered from commits into unique ids.
+    """
+
+    def __init__(
+        self,
+        chunksize: int,
+        logger_name: Optional[str] = None,
+    ):
+        super(AuthorProcessor, self).__init__(chunksize=chunksize, logger_name=logger_name)
+        self._authors: Set[Tuple[str, str]] = set()
+        self._authors_map: Dict[Tuple[str, str], int] = {}
+
+    def prepare(self, in_fname: str, in_fnames: List[str]):
+        if "train" in in_fname:
+            for fname in in_fnames:
+                reader = self._read_input(fname)
+                for chunk in tqdm(reader, desc=f"Reading authors from {in_fname}", leave=False):
+                    self._authors.update((tuple(author) for author in chunk["author"].tolist()))
+
+            self._authors_map = {author: i for i, author in enumerate(self._authors)}
+
+    def process(self, chunk: pd.DataFrame, **kwargs) -> pd.DataFrame:
+        chunk["author"] = chunk["author"].apply(tuple).map(self._authors_map)
+        return chunk
+
+    @property
+    def authors_map(self):
+        return self._authors_map
+
+
 class OutliersProcessor(BaseProcessor):
     """
     This class is used to drop commits with too long or too short diffs and messages.
@@ -353,7 +385,7 @@ class PostDeduplicationProcessor(BaseProcessor):
         self._train_full_clones: Set[str] = set()
         self._ids_to_drop: Set[int] = set()
 
-    def _extract_metadata(self, in_path: str, deduplication_dir: str):
+    def _extract_metadata(self, in_path: str, deduplication_dir: str, parts: List[str]):
         """
         This method saves commits metadata (author, timestamp, repo, hash) from main dataset files into separate
         files.
@@ -362,7 +394,7 @@ class PostDeduplicationProcessor(BaseProcessor):
         full_out_fname = os.path.join(deduplication_dir, "metadata")
         self._prepare_outfile(full_out_fname)
 
-        for i, part in enumerate(["train", "val", "test", "val_original", "test_original"]):
+        for i, part in enumerate(parts):
             self.logger.info(f"Extracting metadata from {part}")
 
             part_out_fname = os.path.join(deduplication_dir, f"{part}_metadata")
@@ -481,10 +513,16 @@ class PostDeduplicationProcessor(BaseProcessor):
         self.logger.info(f"Got {len(self._ids_to_drop)} clones ids to drop")
 
     def prepare(
-        self, in_fname: str, in_path: str, msg_clones_fname: str, diff_clones_fname: str, deduplication_dir: str
+        self,
+        in_fname: str,
+        in_path: str,
+        msg_clones_fname: str,
+        diff_clones_fname: str,
+        deduplication_dir: str,
+        parts: List[str],
     ):
 
-        self._extract_metadata(in_path, deduplication_dir)
+        self._extract_metadata(in_path, deduplication_dir, parts)
 
         self._add_metadata(
             in_fname=os.path.join(deduplication_dir, msg_clones_fname),

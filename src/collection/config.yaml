@@ -4,6 +4,12 @@ pydriller_kwargs:
   only_no_merge: true
 n_workers: 4
 org_repo_sep: "#"
+parts:
+  - train
+  - val
+  - test
+  - val_original
+  - test_original
 paths:
   temp_clone_dir: temp
   input_dir: repos

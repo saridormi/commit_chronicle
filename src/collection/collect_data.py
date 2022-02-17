@@ -20,7 +20,7 @@ def main(cfg: DictConfig) -> None:
 
     os.makedirs(cfg.paths.temp_clone_dir, exist_ok=True)
 
-    for part in ["train", "val", "test", "val_original", "test_original"]:
+    for part in cfg.parts:
         inputs = []
         logging.info(f"Processing {part}")
         for repo in os.listdir(os.path.join(cfg.paths.input_dir, part)):

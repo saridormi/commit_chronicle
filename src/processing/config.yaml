@@ -1,3 +1,8 @@
+author_processor:
+  run_anyway: false
+  args:
+    chunksize: 256
+    logger_name: author_processor
 outliers_processor:
   run_anyway: false
   args:
@@ -6,37 +11,37 @@ outliers_processor:
     logger_name: outliers_processor
     lower_percentile: 0.01
     upper_percentile: 0.95
-
 pre_deduplication_processor:
   run_anyway: false
   args:
     chunksize: 1000
     n_workers: 8
     logger_name: pre_deduplication_processor
-
 post_deduplication_processor:
   run_anyway: false
   args:
     chunksize: 1000
     n_workers: 8
     logger_name: post_deduplication_processor
-
 message_processor:
   run_anyway: false
   args:
     chunksize: 1000
     n_workers: 8
     logger_name: message_processor
-
 diff_processor:
   run_anyway: true
   args:
     chunksize: 2000
     n_workers: 16
     logger_name: diff_processor
-
 clones_ready: true
-
+parts:
+  - train
+  - val
+  - test
+  - val_original
+  - test_original
 paths:
   input_dir: extracted_data_jsonl
   percentile_dir: percentiles
