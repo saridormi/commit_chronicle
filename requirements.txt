@@ -9,6 +9,7 @@ nltk==3.6.6
 pygments==2.10.0
 tokenizers==0.9.4
 transformers==4.2.1
+dask
 
 # utils
 tqdm==4.62.1

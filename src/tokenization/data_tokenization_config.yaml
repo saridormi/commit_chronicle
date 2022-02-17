@@ -1,4 +1,7 @@
 training_processor:
+  blocksize: 1e8
+  chunksize: 5000
+  clean_temp_files: true
   msg_tokenizer_name: distilgpt2
   diff_kwargs:
     truncation: true
