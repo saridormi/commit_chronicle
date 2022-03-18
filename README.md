@@ -11,7 +11,7 @@ This repository contains code for collecting and filtering data about commits fr
 
 ## Ready-to-use dataset 
 
-> :exclamation: This section is about **old** dataset, current data format is different.
+> :exclamation: This section is about **old** Java dataset, current data format is different.
 
 Dataset is currently available **only to JetBrains employees** at [Google Drive](https://drive.google.com/drive/folders/1Z3LgzG23KcZGln53ta4WVKBPp0S8_XhZ?usp=sharing).
 
@@ -84,11 +84,10 @@ Follow these steps:
    ```
    pip install -r requirements.txt
    ``` 
-   
 
 3. **Provide repos to collect data from**
 
-    We used [GitHub Search](https://arxiv.org/abs/2103.04682) to select repositories that meet several criteria *(you can look through [`choosing_repos.ipynb`](https://github.com/saridormi/commits_dataset/blob/gather_by_hash/notebooks/multilang/choosing_repos.ipynb) for more information on our specific criteria)*.
+    We used [GitHub Search](https://arxiv.org/abs/2103.04682) to select repositories that meet several criteria *(you can look through [`choosing_repos.ipynb`](notebooks/choosing_repos.ipynb) for more information on our specific criteria)*.
 
     <details>
     <summary>:yellow_heart: click here for more information about expected data format</summary>
@@ -116,16 +115,16 @@ Follow these steps:
 
    ```
       {
-         "repo": "saridormi/commits_dataset", 
-         "url": "https://github.com/saridormi/commits_dataset.git",
-         "hashes": ["78e474ecb3eba12b7a100b431d24ae85adca7a6d"]
+       'repo': 'saridormi/commits_dataset',
+       'url': 'https://github.com/saridormi/commits_dataset.git',
+       'hashes': ['a7fb3b64184f0af5b08285cce14b9139baa94049']
       }
    ```
    </details>
 
 4. **Define configuration**
 
-      Configuration is defined at [`src/collection/config.yaml`](https://github.com/saridormi/commits_dataset/blob/gather_by_hash/src/collection/config.yaml).
+      Configuration is defined at [`src/collection/config.yaml`](src/collection/config.yaml).
 
       <details>
       <summary>:yellow_heart: click here for more information about possible options</summary>
@@ -135,11 +134,13 @@ Follow these steps:
       ```
       repo_processor:
          chunksize: ...
+   
       pydriller_kwargs:
         ...
+   
       n_workers: ...
       org_repo_sep: ...
-      parts: ...
+   
       paths: ...
           temp_clone_dir: ...
           input_dir: ...
@@ -155,7 +156,6 @@ Follow these steps:
       
       * `n_workers`: # of threads for parallel data gathering
       * `org_repo_sep`: symbol to replace `/` in `"org/repo"`
-      * `parts`: folder names for parts repositories are pre-split on
       * `paths`:
       
         Paths are moved to separate key to convert them all to absolute paths via hydra.
@@ -171,6 +171,68 @@ Follow these steps:
     python -m src.collection.collect_data
     ```
    
+   <details>
+      <summary>:yellow_heart: click here for more information about collected data format</summary>
+        
+      Currently, data is saved in JSON Lines format. Information about each commit includes the following keys:
+
+      - `"author"`: commit author (name, email)
+      - `"date"`: commit timestamp (in format `"%d.%m.%Y %H:%M:%S"`)
+      - `"hash"`: commit hash
+      - `"message"`: commit message
+      - `"mods"`: list of files modifications in commit
+        - Each modification is a dictionary itself and includes the following keys:
+          - `"change_type"`: one of `"ADD"`, `"COPY"`, `"RENAME"`, `"DELETE"`, `"MODIFY"` or `"UNKNOWN"`
+          - `"old_path"`: old path to file
+          - `"new_path"`: new path to file
+          - `"diff"`: file diff
+      - `"repo"`: full repository name
+      
+      [An example:](https://github.com/saridormi/commits_dataset/commit/a7fb3b64184f0af5b08285cce14b9139baa94049)
+
+      ```
+      {
+        'author': ['Aleksandra Eliseeva', 'xxx@email.com'],
+        'date': '05.07.2021 15:10:07',
+        'hash': 'a7fb3b64184f0af5b08285cce14b9139baa94049',
+        'message': 'Add license badge to readme',
+        'mods': [{'change_type': 'MODIFY',
+                  'diff': '@@ -1,6 +1,6 @@\n'
+                          ' # Commits dataset\n'
+                          ' \n'
+                          '-> :heavy_exclamation_mark: **TODO:** license\n'
+                          '+![GitHub](https://img.shields.io/github/license/saridormi/commits_dataset?style=for-the-badge)\n'
+                  'new_path': 'README.md',
+                  'old_path': 'README.md'}],
+        'repo': 'saridormi/commits_dataset'
+      }
+      ```
+   
+      First, commits from each repo are saved to its own file and zipped, so folder structure looks like this:
+    
+      ```
+         ├── ...  # output folder
+         │   ├── part_1
+         │   │    ├── repo_1.jsonl.gz
+         │   │    ├── ...
+         │   │    └── repo_n.jsonl.gz
+         │   ├── ...
+         │   └── part_k
+         └── ...
+      ```
+   
+      At the end commits from each part are united to single files, so folder structure looks like this:
+      ```
+         ├── ...  # output folder
+         │   ├── part_1.jsonl
+         │   ├── ...
+         │   └── part_k.jsonl
+         └── ...
+      ```
+   
+      Currently, script doesn't remove the former version, you should do it manually if you don't need raw data.
+   </details>
+
 ## How to use data processing code
 
 > :star2: work in progress
