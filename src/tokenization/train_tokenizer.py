@@ -15,6 +15,14 @@ def main(cfg: DictConfig) -> None:
         cfg.paths[key] = to_absolute_path(cfg.paths[key])
         os.makedirs(cfg.paths[key], exist_ok=True)
 
+    parts = ["train"] + sorted(
+        [
+            part.split(".")[0]
+            for part in os.listdir(cfg.paths.input_dir)
+            if not os.path.isdir(os.path.join(cfg.paths.input_dir, part)) and "train" not in part
+        ]
+    )
+
     logging.info("======= Using config =======")
     logging.info(cfg)
 
@@ -30,8 +38,8 @@ def main(cfg: DictConfig) -> None:
     else:
         fnames = []
 
-        lexer = Lexer(**cfg.lexer)
-        for part in cfg.parts:
+        lexer = Lexer(**cfg.lexer, data_format=cfg.data_format)
+        for part in parts:
             part_fname = os.path.join(cfg.paths.input_dir, "lexed_diffs_only", f"{part}.txt")
             os.makedirs(os.path.join(cfg.paths.percentile_dir, part), exist_ok=True)
 
@@ -41,8 +49,8 @@ def main(cfg: DictConfig) -> None:
 
             logging.info(f"Pretokenizing {part}")
             lexer(
-                in_fname=os.path.join(cfg.paths.input_dir, "filtered_diffs", f"{part}.jsonl"),
-                out_fname=os.path.join(cfg.paths.input_dir, "lexed", f"{part}.jsonl"),
+                in_fname=os.path.join(cfg.paths.input_dir, "filtered_diffs", part),
+                out_fname=os.path.join(cfg.paths.input_dir, "lexed", part),
                 diffs_out_fname=part_fname,
                 prepare_literals_len_dir=os.path.join(cfg.paths.percentile_dir, part),
                 prepare_percentile_dir=percentile_dir,

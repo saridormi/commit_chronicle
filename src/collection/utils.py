@@ -48,23 +48,31 @@ class CommitProcessor:
 
 
 class RepoProcessor(BaseProcessor):
-    def __init__(self, temp_clone_dir: str, output_dir: str, chunksize: int, logger_name: Optional[str] = None):
-        super(RepoProcessor, self).__init__(chunksize=chunksize, logger_name=logger_name)
+    def __init__(
+        self,
+        temp_clone_dir: str,
+        output_dir: str,
+        chunksize: int,
+        data_format: str,
+        n_workers: Optional[int] = None,
+        logger_name: Optional[str] = None,
+    ):
+        super().__init__(chunksize=chunksize, logger_name=logger_name, n_workers=n_workers, data_format=data_format)
         self._temp_clone_dir = temp_clone_dir
         self._output_dir = output_dir
 
     def process_repo(self, repo_name, repo_url, **repo_kwargs):
         """
-        Gather commits from given repo via PyDriller and save to csv file.
+        Gather commits from given repo via PyDriller.
 
         Args:
             - repo_name: full repository name, including author/organization
             - repo_url: url to clone the repository from
         """
-        out_fname = os.path.join(self._output_dir, repo_name, "commits.jsonl")
+        out_fname = os.path.join(self._output_dir, repo_name, "commits")
 
         # do not process already processed repos
-        if "commits.jsonl.gz" in os.listdir(os.path.join(self._output_dir, repo_name)):
+        if f"commits.{self.data_format}.gz" in os.listdir(os.path.join(self._output_dir, repo_name)):
             return
 
         # read already cloned repos from disk
@@ -104,9 +112,11 @@ class RepoProcessor(BaseProcessor):
             self._append_to_outfile(commits_data, out_fname)
 
         self.logger.debug(f"[{repo_name}] Zipping file")
-        with open(out_fname, "rb") as f_in, gzip.open(out_fname + ".gz", "wb") as f_out:
+        with open(f"{out_fname}.{self.data_format}", "rb") as f_in, gzip.open(
+            f"{out_fname}.{self.data_format}.gz", "wb"
+        ) as f_out:
             f_out.writelines(f_in)
-        os.remove(out_fname)
+        os.remove(f"{out_fname}.{self.data_format}")
 
         self.logger.info(f"[{repo_name}] Finish processing")
 
@@ -121,7 +131,11 @@ class RepoProcessor(BaseProcessor):
         cur_idx = 0
         for repo_name in tqdm(os.listdir(self._output_dir), desc=f"Processing commits from each repo", leave=False):
             # read data in chunks
-            reader = self._read_input(os.path.join(self._output_dir, repo_name, "commits.jsonl.gz"), compression="gzip")
+            reader = self._read_input(
+                os.path.join(self._output_dir, repo_name, f"commits.{self.data_format}.gz"),
+                compression="gzip",
+                add_data_format=False,
+            )
             cur_len = 0
             try:
                 for i, chunk in enumerate(reader):
@@ -130,7 +144,7 @@ class RepoProcessor(BaseProcessor):
                     chunk["id"] += cur_idx
                     chunk["repo"] = repo_name.replace("#", "/")
 
-                    self._append_to_outfile(chunk.to_dict(orient="records"), out_fname)
+                    self._append_to_outfile(chunk, out_fname)
 
                     cur_len += chunk.shape[0]
 

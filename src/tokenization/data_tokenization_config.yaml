@@ -1,3 +1,5 @@
+data_format: jsonl
+
 training_processor:
   blocksize: 1e8
   chunksize: 5000
@@ -10,13 +12,8 @@ training_processor:
   msg_kwargs:
     truncation: true
     return_attention_mask: false
-parts:
-  - train
-  - val
-  - test
-  - val_original
-  - test_original
+
 paths:
-  diff_tokenizer_path: tokenizer/diff_tokenizer.json
-  input_dir: extracted_data_jsonl
-  output_dir: processed_data
+  diff_tokenizer_path: test/tokenizer/diff_tokenizer.json
+  input_dir: test/extracted_data_jsonl
+  output_dir: test/processed_data

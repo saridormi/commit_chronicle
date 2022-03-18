@@ -15,25 +15,28 @@ def main(cfg: DictConfig) -> None:
     for key in cfg.paths:
         cfg.paths[key] = to_absolute_path(cfg.paths[key])
 
+    parts = os.listdir(cfg.paths.input_dir)
+
     logging.info("======= Using config =======")
     logging.info(cfg)
 
     os.makedirs(cfg.paths.temp_clone_dir, exist_ok=True)
 
-    for part in cfg.parts:
+    for part in parts:
         inputs = []
         logging.info(f"Processing {part}")
         for repo in os.listdir(os.path.join(cfg.paths.input_dir, part)):
             with open(os.path.join(cfg.paths.input_dir, part, repo), "r") as infile:
                 cur_input = json.load(infile)
                 cur_input["repo"] = cur_input["repo"].replace("/", cfg.org_repo_sep)
-                os.makedirs(os.path.join(cfg.paths.output_dir, part, cur_input["repo"]), exist_ok=True)
+                os.makedirs(os.path.join(cfg.paths.output_dir, "raw", part, cur_input["repo"]), exist_ok=True)
                 inputs.append(cur_input)
 
         rp = RepoProcessor(
             temp_clone_dir=cfg.paths.temp_clone_dir,
-            output_dir=os.path.join(cfg.paths.output_dir, part),
-            logger_name="collect_data",
+            output_dir=os.path.join(cfg.paths.output_dir, "raw", part),
+            logger_name="repo_processor",
+            data_format=cfg.data_format,
             **cfg.repo_processor,
         )
 
@@ -47,7 +50,7 @@ def main(cfg: DictConfig) -> None:
                 for cur_input in inputs
             )
 
-        rp.unite_files(out_fname=os.path.join(cfg.paths.output_dir, f"{part}.jsonl"))
+        rp.unite_files(out_fname=os.path.join(cfg.paths.output_dir, part))
 
 
 if __name__ == "__main__":

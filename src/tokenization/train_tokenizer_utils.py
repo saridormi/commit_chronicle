@@ -23,10 +23,11 @@ class Lexer(BaseProcessor):
         upper_percentile: float,
         sep_token: str,
         chunksize: int,
-        n_workers: int,
+        data_format: str,
+        n_workers: Optional[int] = None,
         logger_name: Optional[str] = None,
     ):
-        super(Lexer, self).__init__(chunksize=chunksize, logger_name=logger_name, n_workers=n_workers)
+        super().__init__(chunksize=chunksize, logger_name=logger_name, n_workers=n_workers, data_format=data_format)
         self._sep = sep_token
         self._upper_percentile = upper_percentile
         self._percentiles: Dict[float, float] = {}
@@ -213,8 +214,6 @@ class Lexer(BaseProcessor):
         for chunk in tqdm(reader, leave=False):
             processed_chunk = self.process(chunk.loc[~chunk["id"].isin(self._examples_to_skip)], **process_kwargs)
             self._append_to_outfile(processed_chunk["mods"].tolist(), diffs_out_fname)
-            if isinstance(processed_chunk, pd.DataFrame):
-                processed_chunk = processed_chunk.to_dict(orient="records")
             self._append_to_outfile(processed_chunk, out_fname)
 
         self.logger.info(f"Finished processing {in_fname}")

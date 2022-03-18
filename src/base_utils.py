@@ -1,23 +1,110 @@
-import os
 import logging
 import jsonlines
 import pandas as pd
+import dask.dataframe as dd
 from tqdm import tqdm
 from typing import List, Dict, Any, Optional, Union
 
 
+class BaseManager:
+    """
+    This is a base class for writing & reading data.
+    """
+
+    def prepare_outfile(self, out_fname: str, add_data_format: Optional[bool] = True):
+        """
+        Do what might be required before saving to chosen output format.
+        (e.g. write header in case of csv files)
+        """
+        raise NotImplementedError()
+
+    def append_to_outfile(
+        self, data: Union[List[str], List[Dict[str, Any]]], out_fname: str, add_data_format: Optional[bool] = True
+    ):
+        """
+        Append current data chunk to chosen output format.
+        """
+        raise NotImplementedError()
+
+    def read_input(self, in_fname: str, add_data_format: Optional[bool] = True, **kwargs):
+        """
+        Read data according to chosen output format (accessing full dataset/reading in chunks).
+        """
+        raise NotImplementedError()
+
+    def read_input_lazy(self, in_fname: str, add_data_format: Optional[bool] = True, **kwargs):
+        """
+        Read data according to chosen output format (accessing full dataset in lazy fashion).
+        """
+        raise NotImplementedError()
+
+
+class JsonlManager(BaseManager):
+    """
+    This is a class for writing & reading jsonl data.
+    """
+
+    def prepare_outfile(self, out_fname: str, add_data_format: Optional[bool] = True):
+        """
+        Clear target file.
+        """
+        if add_data_format and ".txt" not in out_fname:
+            out_fname = f"{out_fname}.jsonl"
+        open(out_fname, mode="w").close()
+
+    def append_to_outfile(
+        self,
+        data: Union[pd.DataFrame, List[str], List[Dict[str, Any]]],
+        out_fname: str,
+        add_data_format: Optional[bool] = True,
+    ):
+        """
+        Append current data chunk.
+        """
+        if isinstance(data, pd.DataFrame):
+            data = data.to_dict(orient="records")
+
+        if add_data_format and ".txt" not in out_fname:
+            out_fname = f"{out_fname}.jsonl"
+
+        with jsonlines.open(out_fname, mode="a") as writer:
+            writer.write_all(data)
+
+    def read_input(self, in_fname: str, add_data_format: Optional[bool] = True, **kwargs):
+        """
+        Read jsonl data with pandas.
+        """
+        if add_data_format and ".txt" not in in_fname:
+            in_fname = f"{in_fname}.jsonl"
+        return pd.read_json(in_fname, orient="records", lines=True, convert_dates=False, **kwargs)
+
+    def read_input_lazy(self, in_fname: str, add_data_format: Optional[bool] = True, **kwargs):
+        """
+        Read jsonl data with dask.
+        """
+        if add_data_format and ".txt" not in in_fname:
+            in_fname = f"{in_fname}.jsonl"
+        return dd.read_json(in_fname, orient="records", lines=True, **kwargs)
+
+
 class BaseProcessor:
     """
-    This is a base class for data collection and processing, provides methods for writing & reading data and for
+    This is a base class for data collection and processing, which provides methods for writing & reading data and
     logging.
-
-    Currently data is saved as jsonl.
     """
 
-    def __init__(self, chunksize: int, n_workers: Optional[int] = None, logger_name: Optional[str] = None):
+    def __init__(
+        self, chunksize: int, data_format: str, n_workers: Optional[int] = None, logger_name: Optional[str] = None
+    ):
         self._chunksize = chunksize
         self._n_workers = n_workers
         self.logger = BaseProcessor._get_logger(logger_name)
+        self.data_format = data_format
+
+        if data_format == "jsonl":
+            self._data_manager = JsonlManager()
+        else:
+            raise NotImplementedError("Current data format is not supported")
 
     @staticmethod
     def _get_logger(name):
@@ -35,40 +122,39 @@ class BaseProcessor:
             logger.addHandler(fh)
         return logger
 
-    def _prepare_outfile(self, out_fname: str):
+    def _prepare_outfile(self, out_fname: str, add_data_format: Optional[bool] = True):
         """
         Do what might be required before saving to chosen output format.
         (e.g. write header in case of csv files)
         """
-        open(os.path.join(out_fname), mode="w").close()
+        self._data_manager.prepare_outfile(out_fname, add_data_format=add_data_format)
 
-    def _append_to_outfile(self, data: Union[List[str], List[Dict[str, Any]]], out_fname: str):
+    def _append_to_outfile(
+        self,
+        data: Union[pd.DataFrame, List[str], List[Dict[str, Any]]],
+        out_fname: str,
+        add_data_format: Optional[bool] = True,
+    ):
         """
         Append current data chunk to chosen output format.
         """
-        with jsonlines.open(out_fname, mode="a") as writer:
-            writer.write_all(data)
+        self._data_manager.append_to_outfile(data, out_fname, add_data_format=add_data_format)
 
-    def _read_input(self, input_fname: str, compression: Optional[str] = None, read_whole: Optional[bool] = None):
+    def _read_input(
+        self,
+        in_fname: str,
+        read_whole: Optional[bool] = None,
+        add_data_format: Optional[bool] = True,
+        read_lazy: Optional[bool] = None,
+        **kwargs,
+    ):
         """
         Read data according to chosen output format.
         """
-        if read_whole:
-            return pd.read_json(
-                input_fname,
-                orient="records",
-                lines=True,
-                compression=compression,
-                convert_dates=False,
-            )
-
-        return pd.read_json(
-            input_fname,
-            chunksize=self._chunksize,
-            orient="records",
-            lines=True,
-            compression=compression,
-            convert_dates=False,
+        if read_lazy:
+            return self._data_manager.read_input_lazy(in_fname, add_data_format=add_data_format, **kwargs)
+        return self._data_manager.read_input(
+            in_fname, add_data_format=add_data_format, chunksize=None if read_whole else self._chunksize, **kwargs
         )
 
     def prepare(self, in_fname: str, **kwargs):

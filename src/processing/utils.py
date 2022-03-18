@@ -21,9 +21,10 @@ class AuthorProcessor(BaseProcessor):
     def __init__(
         self,
         chunksize: int,
+        data_format: str,
         logger_name: Optional[str] = None,
     ):
-        super(AuthorProcessor, self).__init__(chunksize=chunksize, logger_name=logger_name)
+        super().__init__(chunksize=chunksize, data_format=data_format, logger_name=logger_name)
         self._authors: Set[Tuple[str, str]] = set()
         self._authors_map: Dict[Tuple[str, str], int] = {}
 
@@ -64,11 +65,12 @@ class OutliersProcessor(BaseProcessor):
         lower_percentile: float,
         upper_percentile: float,
         chunksize: int,
-        n_workers: int,
-        diff_upper_bound: Optional[int] = None,
+        data_format: str,
+        n_workers: Optional[int] = None,
         logger_name: Optional[str] = None,
+        diff_upper_bound: Optional[int] = None,
     ):
-        super(OutliersProcessor, self).__init__(chunksize=chunksize, logger_name=logger_name, n_workers=n_workers)
+        super().__init__(chunksize=chunksize, logger_name=logger_name, n_workers=n_workers, data_format=data_format)
         self._lower_percentile = lower_percentile
         self._upper_percentile = upper_percentile
         self._diff_upper_bound = diff_upper_bound
@@ -101,7 +103,6 @@ class OutliersProcessor(BaseProcessor):
         """
         This method tokenizes each diff in commit modifications and returns string with id and # of tokens.
         """
-
         try:
             n_tokens = 0
             for mod in mods:
@@ -238,10 +239,7 @@ class OutliersProcessor(BaseProcessor):
              - percentile_dir: (optional) path to directory with already computed percentiles; might be useful for
                 dropping outliers from val/test by using percentiles from train, which has much more examples
         """
-        if "n_tokens_diff.txt" not in os.listdir(n_tokens_dir) or "n_tokens_message.txt" not in os.listdir(
-            n_tokens_dir
-        ):
-            self._get_n_tokens(in_fname=in_fname, n_tokens_dir=n_tokens_dir)
+        self._get_n_tokens(in_fname=in_fname, n_tokens_dir=n_tokens_dir)
 
         if percentile_dir:
             # read precomputed percentiles
@@ -265,11 +263,15 @@ class PreDeduplicationProcessor(BaseProcessor):
     This class is used to process data to format expected by code clones detection tool SourcererCC.
     """
 
-    def __init__(self, project_id: int, chunksize: int, n_workers: int, logger_name: Optional[str] = None):
-
-        super(PreDeduplicationProcessor, self).__init__(
-            chunksize=chunksize, logger_name=logger_name, n_workers=n_workers
-        )
+    def __init__(
+        self,
+        project_id: int,
+        chunksize: int,
+        data_format: str,
+        n_workers: Optional[int] = None,
+        logger_name: Optional[str] = None,
+    ):
+        super().__init__(chunksize=chunksize, logger_name=logger_name, n_workers=n_workers, data_format=data_format)
         self._separators = r'[;.\[\]\(\)\~!\-\+\&\*/%<>\^\|\?\{\}=\#,"\\\:\$\'`@ +\n\r\t]'
         self._project_id = project_id
         self._n_workers = n_workers
@@ -280,11 +282,8 @@ class PreDeduplicationProcessor(BaseProcessor):
 
         We don't want to consider filenames when running duplicates search on diffs, so `old_path`/`new_path`/`change_type`
         fields are ignored.
-
-        TODO:
-        Currently previous behavior is reproduced by skipping UNKNOWN modifications.
         """
-        return " ".join(mod["diff"] for mod in mods if mod["change_type"] != "UNKNOWN")
+        return " ".join(mod["diff"] for mod in mods)
 
     def _hash_string(self, x: str) -> str:
         hash = hashlib.md5()
@@ -376,12 +375,11 @@ class PostDeduplicationProcessor(BaseProcessor):
     def __init__(
         self,
         chunksize: int,
-        n_workers: int,
+        data_format: str,
+        n_workers: Optional[int] = None,
         logger_name: Optional[str] = None,
     ):
-        super(PostDeduplicationProcessor, self).__init__(
-            chunksize=chunksize, logger_name=logger_name, n_workers=n_workers
-        )
+        super().__init__(chunksize=chunksize, logger_name=logger_name, n_workers=n_workers, data_format=data_format)
         self._train_full_clones: Set[str] = set()
         self._ids_to_drop: Set[int] = set()
 
@@ -400,16 +398,16 @@ class PostDeduplicationProcessor(BaseProcessor):
             part_out_fname = os.path.join(deduplication_dir, f"{part}_metadata")
             self._prepare_outfile(part_out_fname)
 
-            reader = self._read_input(os.path.join(in_path, f"{part}.jsonl"))
+            reader = self._read_input(os.path.join(in_path, part))
 
             for chunk in tqdm(reader, desc=f"Iterating over {part} to extract metadata"):
                 chunk["project_id"] = i + 1
                 self._append_to_outfile(
-                    chunk[["project_id", "id", "author", "date", "hash", "repo"]].to_dict(orient="records"),
+                    chunk[["project_id", "id", "author", "date", "hash", "repo"]],
                     part_out_fname,
                 )
                 self._append_to_outfile(
-                    chunk[["project_id", "id", "author", "date", "hash", "repo"]].to_dict(orient="records"),
+                    chunk[["project_id", "id", "author", "date", "hash", "repo"]],
                     full_out_fname,
                 )
 
@@ -654,7 +652,8 @@ class DiffProcessor(BaseProcessor):
     This class is used to filter undesirable patterns from diffs.
     """
 
-    def _filter_diff(self, diff: str) -> str:
+    @staticmethod
+    def _filter_diff(diff: str) -> str:
         """
         This method filters single diff string.
         Currently filtering for diffs includes the following:
@@ -686,20 +685,21 @@ class DiffProcessor(BaseProcessor):
         processed_diff = re.sub("[^\S\n]+", " ", processed_diff)
         return processed_diff
 
-    def _filter_mods(self, mods: List[Dict[str, str]]) -> List[Dict[str, str]]:
+    @staticmethod
+    def _filter_mods(mods: List[Dict[str, str]]) -> List[Dict[str, str]]:
         """
         This method filters all modifications from single commit.
         """
         filtered_mods = []
         for mod in mods:
             if isinstance(mod["diff"], str) and mod["diff"].isascii():
-                mod["diff"] = self._filter_diff(mod["diff"])
+                mod["diff"] = DiffProcessor._filter_diff(mod["diff"])
                 filtered_mods.append(mod)
         return filtered_mods
 
     def process(self, chunk: pd.DataFrame, **kwargs) -> pd.DataFrame:
         with Parallel(self._n_workers) as pool:
-            filtered_mods = pool(delayed(self._filter_mods)(mods) for _, mods in chunk["mods"].items())
+            filtered_mods = pool(delayed(DiffProcessor._filter_mods)(mods) for _, mods in chunk["mods"].items())
 
         chunk["mods"] = filtered_mods
         return chunk
