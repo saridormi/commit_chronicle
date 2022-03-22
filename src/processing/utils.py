@@ -20,11 +20,12 @@ class AuthorProcessor(BaseProcessor):
 
     def __init__(
         self,
-        chunksize: int,
         data_format: str,
+        chunksize: Optional[int] = None,
+        n_workers: Optional[int] = None,
         logger_name: Optional[str] = None,
     ):
-        super().__init__(chunksize=chunksize, data_format=data_format, logger_name=logger_name)
+        super().__init__(chunksize=chunksize, n_workers=n_workers, data_format=data_format, logger_name=logger_name)
         self._authors: Set[Tuple[str, str]] = set()
         self._authors_map: Dict[Tuple[str, str], int] = {}
 
@@ -64,13 +65,13 @@ class OutliersProcessor(BaseProcessor):
         self,
         lower_percentile: float,
         upper_percentile: float,
-        chunksize: int,
         data_format: str,
+        chunksize: Optional[int] = None,
         n_workers: Optional[int] = None,
         logger_name: Optional[str] = None,
         diff_upper_bound: Optional[int] = None,
     ):
-        super().__init__(chunksize=chunksize, logger_name=logger_name, n_workers=n_workers, data_format=data_format)
+        super().__init__(chunksize=chunksize, n_workers=n_workers, data_format=data_format, logger_name=logger_name)
         self._lower_percentile = lower_percentile
         self._upper_percentile = upper_percentile
         self._diff_upper_bound = diff_upper_bound
@@ -266,12 +267,12 @@ class PreDeduplicationProcessor(BaseProcessor):
     def __init__(
         self,
         project_id: int,
-        chunksize: int,
         data_format: str,
+        chunksize: Optional[int] = None,
         n_workers: Optional[int] = None,
         logger_name: Optional[str] = None,
     ):
-        super().__init__(chunksize=chunksize, logger_name=logger_name, n_workers=n_workers, data_format=data_format)
+        super().__init__(chunksize=chunksize, n_workers=n_workers, data_format=data_format, logger_name=logger_name)
         self._separators = r'[;.\[\]\(\)\~!\-\+\&\*/%<>\^\|\?\{\}=\#,"\\\:\$\'`@ +\n\r\t]'
         self._project_id = project_id
         self._n_workers = n_workers
@@ -374,12 +375,12 @@ class PostDeduplicationProcessor(BaseProcessor):
 
     def __init__(
         self,
-        chunksize: int,
         data_format: str,
+        chunksize: Optional[int] = None,
         n_workers: Optional[int] = None,
         logger_name: Optional[str] = None,
     ):
-        super().__init__(chunksize=chunksize, logger_name=logger_name, n_workers=n_workers, data_format=data_format)
+        super().__init__(chunksize=chunksize, n_workers=n_workers, data_format=data_format, logger_name=logger_name)
         self._train_full_clones: Set[str] = set()
         self._ids_to_drop: Set[int] = set()
 

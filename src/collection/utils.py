@@ -3,6 +3,8 @@ from typing import Optional, Dict, Any
 
 import gzip
 from configparser import NoOptionError
+
+import pandas as pd
 from tqdm import tqdm
 
 from pydriller import Modification, Commit, RepositoryMining
@@ -109,7 +111,7 @@ class RepoProcessor(BaseProcessor):
 
         if len(commits_data) > 0:
             self.logger.debug(f"[{repo_name}] Final writing to file")
-            self._append_to_outfile(commits_data, out_fname)
+            self._append_to_outfile(pd.DataFrame.from_records(commits_data), out_fname)
 
         self.logger.debug(f"[{repo_name}] Zipping file")
         with open(f"{out_fname}.{self.data_format}", "rb") as f_in, gzip.open(

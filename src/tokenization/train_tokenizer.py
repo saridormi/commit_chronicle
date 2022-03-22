@@ -38,7 +38,7 @@ def main(cfg: DictConfig) -> None:
     else:
         fnames = []
 
-        lexer = Lexer(**cfg.lexer, data_format=cfg.data_format)
+        lexer = Lexer(**cfg.lexer, data_format=cfg.data_format, logger_name="lexer")
         for part in parts:
             part_fname = os.path.join(cfg.paths.input_dir, "lexed_diffs_only", f"{part}.txt")
             os.makedirs(os.path.join(cfg.paths.percentile_dir, part), exist_ok=True)

@@ -22,12 +22,12 @@ class Lexer(BaseProcessor):
         self,
         upper_percentile: float,
         sep_token: str,
-        chunksize: int,
         data_format: str,
+        chunksize: Optional[int] = None,
         n_workers: Optional[int] = None,
         logger_name: Optional[str] = None,
     ):
-        super().__init__(chunksize=chunksize, logger_name=logger_name, n_workers=n_workers, data_format=data_format)
+        super().__init__(chunksize=chunksize, n_workers=n_workers, data_format=data_format, logger_name=logger_name)
         self._sep = sep_token
         self._upper_percentile = upper_percentile
         self._percentiles: Dict[float, float] = {}
@@ -85,8 +85,11 @@ class Lexer(BaseProcessor):
                 (
                     lexeme[1].strip()
                     for lexeme in mod_tokenized
-                    if lexeme[0] not in Literal
-                    or (lexeme[0] in Literal and len(lexeme[1]) > self._percentiles[self._upper_percentile])
+                    if lexeme[1].strip()
+                    and (
+                        lexeme[0] not in Literal
+                        or (lexeme[0] in Literal and len(lexeme[1]) > self._percentiles[self._upper_percentile])
+                    )
                 )
             )
 

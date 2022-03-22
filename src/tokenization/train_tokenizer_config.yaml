@@ -5,7 +5,6 @@ lexer:
   sep_token: 月
   chunksize: 32000
   n_workers: 16
-  logger_name: lexer
 
 tokenizer:
   _target_: tokenizers.models.BPE
