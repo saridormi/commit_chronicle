@@ -1,22 +1,10 @@
 data_format: jsonl
-clones_ready: true
-
-author_processor:
-  chunksize: 256
 
 outliers_processor:
   chunksize: 256
   n_workers: 4
   lower_percentile: 0.01
   upper_percentile: 0.95
-
-pre_deduplication_processor:
-  chunksize: 1000
-  n_workers: 8
-
-post_deduplication_processor:
-  chunksize: 1000
-  n_workers: 8
 
 message_processor:
   chunksize: 1000
@@ -26,7 +14,27 @@ diff_processor:
   chunksize: 2000
   n_workers: 16
 
+lexer:
+  upper_percentile: 0.95
+  sep_char: 月
+  chunksize: 32000
+  n_workers: 16
+
+pre_deduplication_processor:
+  chunksize: 1000
+  n_workers: 8
+
+post_deduplication_processor:
+  chunksize: 1000
+  n_workers: 8
+
+final_processor:
+  chunksize: 256
+
 paths:
-  input_dir: test/extracted_data_jsonl
-  percentile_dir: test/percentiles
-  deduplication_dir: test/deduplication
+  input_dir: extracted_data_jsonl
+  licenses_dir: repos
+  tokens_percentile_dir: n_tokens
+  literals_percentile_dir: literals_len
+  deduplication_dir: deduplication
+

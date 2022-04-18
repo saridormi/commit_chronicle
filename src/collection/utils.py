@@ -15,6 +15,9 @@ from ..base_utils import BaseProcessor
 class CommitProcessor:
     @staticmethod
     def get_info_from_modification(m: Modification) -> Dict[str, str]:
+        """
+        Extracts specific information about single file modification.
+        """
         return {
             "change_type": str(m.change_type).split(".")[1],
             "old_path": m.old_path,
@@ -23,18 +26,9 @@ class CommitProcessor:
         }
 
     @staticmethod
-    def process_commit(commit: Commit) -> Dict[str, Any]:
+    def process_commit(commit: Commit) -> Dict[str, Union[Sequence[str], str]]:
         """
-        Return following information about commit:
-        - author name & email
-        - timestamp
-        - hash
-        - message
-        - for each modified file:
-            - which change was made (e.g. adding a new file, deleting a file, modifying an existing file)
-            - old_path (relevant if file was deleted/renamed/copied)
-            - new_path (relevant if file was added/renamed/copied)
-            - diff
+        Extracts specific information about commit.
         """
         res = {
             "author": (commit.author.name, commit.author.email),
@@ -50,6 +44,13 @@ class CommitProcessor:
 
 
 class RepoProcessor(BaseProcessor):
+    """Mines commit information from given repository.
+
+    Args:
+        temp_clone_dir: Directory to clone git repositories to.
+        output_dir: Directory to save mined data to.
+    """
+
     def __init__(
         self,
         temp_clone_dir: str,
@@ -63,13 +64,13 @@ class RepoProcessor(BaseProcessor):
         self._temp_clone_dir = temp_clone_dir
         self._output_dir = output_dir
 
-    def process_repo(self, repo_name, repo_url, **repo_kwargs):
-        """
-        Gather commits from given repo via PyDriller.
+    def process_repo(self, repo_name: str, repo_url: str, **repo_kwargs) -> None:
+        """Mines commits from given repository.
 
         Args:
-            - repo_name: full repository name, including author/organization
-            - repo_url: url to clone the repository from
+            repo_name: Full repository name, including author/organization.
+            repo_url: A valid url to remote repository.
+            **repo_kwargs: Arbitrary keyword arguments, will be passed to `pydriller.RepositoryMining`.
         """
         out_fname = os.path.join(self._output_dir, repo_name, "commits")
 
@@ -122,11 +123,14 @@ class RepoProcessor(BaseProcessor):
 
         self.logger.info(f"[{repo_name}] Finish processing")
 
-    def unite_files(self, out_fname: str):
-        """
-        For better parallelism and faster data collection, commits from each repo are saved to its own file.
-        That might be inconvenient to process, so this method allows to unite all these files into one,
-         adding an unique id and repo name as features.
+    def unite_files(self, out_fname: str, org_repo_sep: str) -> None:
+        """Unites separate repositories files, add unique ids, repositories names and licences types as features.
+
+        For faster data collection, initially commits from each repo are saved to its own file.
+
+        Args:
+            out_fname: Path to resulting single file.
+            org_repo_sep: Delimiter used instead of '/' in full repository name.
         """
         self._prepare_outfile(out_fname)
 
@@ -144,7 +148,7 @@ class RepoProcessor(BaseProcessor):
                     # aggregate № examples so that each example from every repo has an unique id
                     chunk["id"] = chunk.index
                     chunk["id"] += cur_idx
-                    chunk["repo"] = repo_name.replace("#", "/")
+                    chunk["repo"] = repo_name.replace(org_repo_sep, "/")
 
                     self._append_to_outfile(chunk, out_fname)
 

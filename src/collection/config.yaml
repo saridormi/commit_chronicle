@@ -7,9 +7,8 @@ repo_processor:
 
 pydriller_kwargs:
   only_no_merge: true
-  skip_whitespaces: true
 
 paths:
-  temp_clone_dir: test/temp
-  input_dir: test/repos
-  output_dir: test/extracted_data_jsonl
+  temp_clone_dir: temp
+  input_dir: repos
+  output_dir: extracted_data_jsonl

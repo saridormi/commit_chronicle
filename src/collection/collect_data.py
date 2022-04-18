@@ -15,7 +15,13 @@ def main(cfg: DictConfig) -> None:
     for key in cfg.paths:
         cfg.paths[key] = to_absolute_path(cfg.paths[key])
 
-    parts = os.listdir(cfg.paths.input_dir)
+    parts = ["train"] + sorted(
+        [
+            part
+            for part in os.listdir(cfg.paths.input_dir)
+            if os.path.isdir(os.path.join(cfg.paths.input_dir, part)) and "train" not in part
+        ]
+    )
 
     logging.info("======= Using config =======")
     logging.info(cfg)
@@ -50,7 +56,7 @@ def main(cfg: DictConfig) -> None:
                 for cur_input in inputs
             )
 
-        rp.unite_files(out_fname=os.path.join(cfg.paths.output_dir, part))
+        rp.unite_files(out_fname=os.path.join(cfg.paths.output_dir, part), org_repo_sep=cfg.org_repo_sep)
 
 
 if __name__ == "__main__":

@@ -10,11 +10,25 @@ from ..base_utils import BaseProcessor
 
 
 class TrainingProcessor(BaseProcessor):
-    """
-    This class is used to convert data into necessary format for training:
-    1) Construct history for each author
-    2) Tokenize diffs and messages
-    3) Save everything in format required by my training pipeline
+    """This class is used to convert data into necessary format for training:
+
+    Currently, it includes the following steps:
+
+    * Construct commit message history for each author
+    * Tokenize diffs and messages
+    * Save everything in format required by training pipeline
+        (https://github.com/JetBrains-Research/commit_message_generation)
+
+    Args:
+        diff_tokenizer_path: Path to diff tokenizer file.
+        msg_tokenizer_name: Model name on HuggingFace hub.
+        blocksize: Number of bytes in a single partition, used by dask.
+        **diff_kwargs: Keyword arguments for diff tokenizer's __call__ method.
+        **msg_kwargs: Keyword arguments for message tokenizer's __call__ method.
+        data_format: In which format mined data is saved.
+        chunksize: Number of examples to proccess at once (data is read in chunks). Optional, default value is 1000.
+        n_workers: Maximum number of concurrently running jobs. Optional, default value is 1 (sequential execution).
+        logger_name: Name of logger for this class. Optional, default value is None.
     """
 
     def __init__(
@@ -25,16 +39,14 @@ class TrainingProcessor(BaseProcessor):
         clean_temp_files: bool,
         diff_kwargs: Dict[str, Any],
         msg_kwargs: Dict[str, Any],
-        chunksize: int,
         data_format: str,
+        chunksize: Optional[int] = None,
         n_workers: Optional[int] = None,
         logger_name: Optional[str] = None,
     ):
         super().__init__(chunksize=chunksize, logger_name=logger_name, n_workers=n_workers, data_format=data_format)
         self._diff_tok = PreTrainedTokenizerFast(tokenizer_file=diff_tokenizer_path)
         self._msg_tok = AutoTokenizer.from_pretrained(msg_tokenizer_name)
-        self._data_format = data_format
-        self._chunksize = chunksize
         self._blocksize = blocksize
         self._clean_temp_files = clean_temp_files
         self._diff_kwargs = diff_kwargs
@@ -46,13 +58,16 @@ class TrainingProcessor(BaseProcessor):
     def _tokenize_messages(self, msgs: List[str]) -> List[List[int]]:
         return self._msg_tok(msgs, **self._msg_kwargs).input_ids
 
-    def _preprocess_data(self, in_fname: str, output_dir: str, part: str):
-        """
-        This method:
-        - adds info about position in history to each example
-        - (only for train part) shuffles data
-        - saves results to separate file
-        Note: assumes that commits from each author are already in correct order for history.
+    def _preprocess_data(self, in_fname: str, output_dir: str, part: str) -> None:
+        """This method does a several preprocessing steps:
+
+        * adds info about position in history to each example
+        * (only for train part) shuffles data
+        * saves results to separate file
+
+        Note:
+            Assumes that commits from each author are already in correct chronological order,
+            which is true for default PyDriller configuration.
         """
         df = self._read_input(in_fname, read_lazy=True, blocksize=self._blocksize)
         df["pos_in_history"] = df.groupby("author").cumcount()
@@ -67,9 +82,8 @@ class TrainingProcessor(BaseProcessor):
             partition["date"] = partition["date"].astype(str)
             self._append_to_outfile(partition, os.path.join(output_dir, f"temp_{part}"))
 
-    def _process_messages(self, output_dir: str, part: str):
-        """
-        This method tokenizes messages, constructs commit message history for each author and saves to separate file.
+    def _process_messages(self, output_dir: str, part: str) -> None:
+        """Tokenizes messages, constructs commit message history for each author and saves to separate file.
         """
         reader = self._read_input(os.path.join(output_dir, f"temp_{part}"))
 
@@ -87,30 +101,36 @@ class TrainingProcessor(BaseProcessor):
         with open(os.path.join(output_dir, f"{part}_history.json"), "w") as outfile:
             json.dump(history, outfile)
 
-    def _process_diffs(self, output_dir: str, part: str):
-        """
-        This method tokenizes diffs and saves all necessary information for working with commit message history
+    def _process_diffs(self, output_dir: str, part: str) -> None:
+        """Tokenizes diffs and saves all necessary information for working with commit message history
         to separate file.
         """
         reader = self._read_input(os.path.join(output_dir, f"temp_{part}"))
         open(os.path.join(output_dir, f"{part}.json"), mode="w").close()
 
         for chunk in tqdm(reader, desc=f"Tokenizing diffs in chunks ({self._chunksize} rows)"):
-            diff_input_ids = self._tokenize_diffs(chunk["mods"].tolist())
+            diff_input_ids = self._tokenize_diffs(chunk["diff"].tolist())
             chunk["diff_input_ids"] = diff_input_ids
 
             with jsonlines.open(os.path.join(output_dir, f"{part}.json"), mode="a") as writer:
                 for row in chunk[["diff_input_ids", "pos_in_history", "author"]].to_dict(orient="records"):
                     writer.write(row)
 
-    def __call__(self, in_fname: str, output_dir: str, part: str):
-        """
-        Expects following columns in input file:
-        - "author"  - commit author
-        - "date"    - commit timestamp
-        - "mods"    - commit modifications
-        - "message" - commit message
-        Note: assumes that commits from each author are already in correct order for history.
+    def __call__(self, in_fname: str, output_dir: str, part: str, **kwargs) -> None:
+        """This method processes data into format required by our pipeline for training & evaluation
+        of Transformer models for commit message completion task:
+        https://github.com/JetBrains-Research/commit_message_generation
+
+        It expects the following fields in input file:
+
+        * "author"  - commit author
+        * "date"    - commit timestamp
+        * "diff"    - commit diff
+        * "message" - commit message
+
+        Note:
+            Assumes that commits from each author are already in correct chronological order,
+            which is true for default PyDriller configuration.
         """
         logging.info(f"Start processing {part}")
         self._preprocess_data(in_fname, output_dir, part)

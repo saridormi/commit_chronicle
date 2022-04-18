@@ -13,22 +13,37 @@ from ..base_utils import BaseProcessor
 
 
 class Lexer(BaseProcessor):
-    """
-    This class finds appropriate lexer for each file diff.
-    It is used as pre-tokenizer for our custom BPE tokenizer.
+    """This class is used to lex diffs when it is possible.
+
+    It calculates percentiles on literals' lengths and drops too long literals.
+
+    It also saves lexed data in a format required for pre-tokenization stage:
+    lexemes are separated by chosen character.
+
+    Args:
+        upper_percentile: Percentile to use as an upper bound (should be in (0, 1) range).
+        sep_char: Character delimiter for separating lexemes.
+        data_format: In which format mined data is saved.
+        chunksize: Number of examples to process at once (data is read in chunks). Optional, default value is 1000.
+        n_workers: Maximum number of concurrently running jobs. Optional, default value is 1 (sequential execution).
+        logger_name: Name of logger for this class. Optional, default value is None.
     """
 
     def __init__(
         self,
         upper_percentile: float,
-        sep_token: str,
+        sep_char: str,
         data_format: str,
         chunksize: Optional[int] = None,
         n_workers: Optional[int] = None,
         logger_name: Optional[str] = None,
     ):
         super().__init__(chunksize=chunksize, n_workers=n_workers, data_format=data_format, logger_name=logger_name)
-        self._sep = sep_token
+
+        if len(sep_char) > 1:
+            raise ValueError("Delimiter should be a single character.")
+
+        self._sep = sep_char
         self._upper_percentile = upper_percentile
         self._percentiles: Dict[float, float] = {}
 
@@ -37,8 +52,7 @@ class Lexer(BaseProcessor):
         self._examples_to_skip = [1731725, 1731749, 1731755, 1731759, 1732004]
 
     def _lex_diff(self, id: int, fname: str, diff: str) -> Iterable[Tuple[_TokenType, str]]:
-        """
-        This method finds appropriate lexer based on diff and filename and returns resulting lexemes.
+        """Finds appropriate lexer based on diff and filename and returns resulting lexemes.
 
         In case pygments doesn't have appropriate lexer or decides to use TextLexer (which doesn't do anything),
         tokens are simply split by spaces.
@@ -54,10 +68,8 @@ class Lexer(BaseProcessor):
             self.logger.warning(f"No lexer found for `{fname}` (id: {id})")
             yield from ((Text, token) for token in diff.split())
 
-    def _lex_commit_mods(self, cur_id: int, cur_mods: List[Dict[str, str]]) -> str:
-        """
-        This method iterates over all modifications in current commit and tokenizes each of them.
-        """
+    def _lex_commit_mods(self, cur_id: int, cur_mods: List[Dict[str, str]]) -> List[str]:
+        """Iterates over all modifications in current commit and tokenizes each of them."""
         tokens: List[str] = []
 
         for mod in cur_mods:
@@ -81,24 +93,21 @@ class Lexer(BaseProcessor):
 
             mod_tokenized = self._lex_diff(cur_id, fname, mod["diff"])
             tokens.extend((token.strip() for token in file_diff.split()))
+            # drop literals with lengths more than upper percentile
             tokens.extend(
                 (
-                    lexeme[1].strip()
+                    lexeme[1]
                     for lexeme in mod_tokenized
-                    if lexeme[1].strip()
-                    and (
-                        lexeme[0] not in Literal
-                        or (lexeme[0] in Literal and len(lexeme[1]) > self._percentiles[self._upper_percentile])
-                    )
+                    if lexeme[0] not in Literal
+                    or (lexeme[0] in Literal and len(lexeme[1]) > self._percentiles[self._upper_percentile])
                 )
             )
 
-        return self._sep.join(tokens)
+        return tokens
 
     def _get_literals_len_mods(self, cur_id: int, cur_mods: List[Dict[str, str]]) -> List[int]:
-        """
-        This method iterates over all modifications in current commit, tokenizes each of them and returns # symbols
-        in each literal.
+        """Iterates over all modifications in current commit,
+        tokenizes each of them and returns length of each literal.
         """
         literals_len = []
 
@@ -112,19 +121,16 @@ class Lexer(BaseProcessor):
                 fname = mod["new_path"]
 
             mod_tokenized = self._lex_diff(cur_id, fname, mod["diff"])
-            literals_len.extend(
-                [len(lexeme[1]) for lexeme in mod_tokenized if lexeme[0] in Literal and len(lexeme[1]) > 1]
-            )
+            literals_len.extend([len(lexeme[1]) for lexeme in mod_tokenized if lexeme[0] in Literal])
 
         return literals_len
 
-    def _get_literals_len(self, in_fname: str, literals_len_dir: str):
-        """
-        This method tokenizes diffs with appropriate lexers and saves lengths of tokens marked as literals.
+    def _get_literals_len(self, in_fname: str, literals_len_dir: str) -> None:
+        """Tokenizes diffs with appropriate lexers and saves lengths of tokens marked as literals.
 
         Args:
-            - in_fname: path to read input data from
-            - literals_len_dir: path to directory to save literals lengths to
+            in_fname: Path to read input data from.
+            literals_len_dir: Path to directory to save literals lengths to.
         """
         self.logger.info(f"Starting processing literals in {in_fname}")
 
@@ -145,12 +151,11 @@ class Lexer(BaseProcessor):
 
         self.logger.info(f"Finished processing literals in {in_fname}")
 
-    def _get_percentiles(self, literals_len_dir: str):
-        """
-        This method calculates 1%, 5%, 90%, 95%, 99% percentiles of literals lengths from diffs.
+    def _get_percentiles(self, literals_len_dir: str) -> None:
+        """Calculates percentiles of literals lengths from diffs.
 
         Args:
-            - literals_len_dir: path to directory to read precomputed literals lengths from
+            literals_len_dir: Path to directory to read precomputed literals lengths from.
         """
         with open(os.path.join(literals_len_dir, "literals_len.txt"), "r") as file:
             literals_lens = [int(line.strip()) for line in file]
@@ -161,20 +166,14 @@ class Lexer(BaseProcessor):
         with open(os.path.join(literals_len_dir, "literals.json"), "w") as file:
             json.dump(self._percentiles, file)
 
-    def prepare(
-        self,
-        in_fname: str,
-        literals_len_dir: str,
-        percentile_dir: Optional[str] = None,
-    ):
-        """
-        This method tokenizes diffs and messages and calculates percentiles for literals lengths.
+    def prepare(self, in_fname: str, literals_len_dir: str, percentile_dir: Optional[str] = None, **kwargs) -> None:
+        """Runs lexers on diffs and removes literals with lengths more than percentiles.
 
-         Args:
-             - in_fname: path to read input data from
-             - literals_len_dir: path to save supplementary information like # of tokens for each example and percentiles
-             - percentile_dir: (optional) path to directory with already computed percentiles; might be useful for
-                dropping outliers from val/test by using percentiles from train, which has much more examples
+        Args:
+            in_fname: Path to read input data from.
+            literals_len_dir: Path to save supplementary information like # of tokens for each example and percentiles.
+            percentile_dir: Path to directory with already computed percentiles. Optional. Use-case: dropping outliers
+               from val/test by percentiles calculated on train.
         """
         if percentile_dir:
             # read precomputed percentiles
@@ -187,22 +186,35 @@ class Lexer(BaseProcessor):
 
     def process(self, chunk: pd.DataFrame, **kwargs) -> pd.DataFrame:
         with Parallel(self._n_workers) as pool:
-            res = pool(
+            tokenized_diffs = pool(
                 delayed(self._lex_commit_mods)(cur_id=item["id"], cur_mods=item["mods"])
                 for _, item in chunk[["id", "mods"]].iterrows()
             )
 
-        chunk["mods"] = res
+        chunk["diff_tok"] = ["".join(diff) for diff in tokenized_diffs]
+        chunk["diff_sep"] = [
+            self._sep.join(token.strip() for token in diff if token.strip()) for diff in tokenized_diffs
+        ]
         return chunk
 
-    def __call__(self, in_fname: str, out_fname: str, diffs_out_fname: str, **kwargs):
+    def __call__(self, in_fname: str, out_fname: str, delimiter_out_fname: str, **kwargs) -> None:
         """
-        This method iterates over input data in chunks, processes it in some way and saves results to separate file.
+        Iterates over input data in chunks, lexes it and saves results to separate file.
+
+        In this particular case, there are two versions of output files:
+
+        * data without long literals
+            (this version can be tokenized with other tokenizers)
+        * data without long literals + all tokens are separated with special delimiter
+            (this version can be tokenized with our custom tokenizer)
 
         Args:
-            - in_fname: path to read input data from
-            - out_fname: path to save processed data to
-            - diffs_out_fname: path to save diffs
+            in_fname: Path to read input data from.
+            out_fname: Path to save processed data to.
+            delimiter_out_fname: Path to save processed data with special delimiter to.
+            **kwargs: Arbitrary keyword arguments. Keyword arguments starting from prefix 'prepare_'
+                will be passed to method that is called before data processing,
+                all others - to method that processes each chunk.
         """
         prepare_kwargs = {key[len("prepare_") :]: value for key, value in kwargs.items() if key.startswith("prepare_")}
         process_kwargs = {key: value for key, value in kwargs.items() if not key.startswith("prepare_")}
@@ -210,13 +222,17 @@ class Lexer(BaseProcessor):
         self.logger.info(f"Starting processing {in_fname}")
 
         self._prepare_outfile(out_fname)
-        self._prepare_outfile(diffs_out_fname)
+        self._prepare_outfile(delimiter_out_fname)
         self.prepare(in_fname, **prepare_kwargs)
 
         reader = self._read_input(in_fname)
         for chunk in tqdm(reader, leave=False):
             processed_chunk = self.process(chunk.loc[~chunk["id"].isin(self._examples_to_skip)], **process_kwargs)
-            self._append_to_outfile(processed_chunk["mods"].tolist(), diffs_out_fname)
-            self._append_to_outfile(processed_chunk, out_fname)
+            self._append_to_outfile(
+                processed_chunk.drop(columns=["diff_sep"]).rename(columns={"diff_tok": "diff"}), out_fname
+            )
+            self._append_to_outfile(
+                processed_chunk.drop(columns=["diff_tok"]).rename(columns={"diff_sep": "diff"}), delimiter_out_fname
+            )
 
         self.logger.info(f"Finished processing {in_fname}")

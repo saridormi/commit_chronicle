@@ -28,7 +28,7 @@ def main(cfg: DictConfig) -> None:
     )
     for part in parts:
         processor(
-            in_fname=os.path.join(cfg.paths.input_dir, "lexed", part),
+            in_fname=os.path.join(cfg.paths.input_dir, "tokenization", f"{part}_final"),
             output_dir=cfg.paths.output_dir,
             part=part,
         )

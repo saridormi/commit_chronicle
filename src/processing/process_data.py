@@ -14,6 +14,8 @@ from src.processing.utils import (
     DiffProcessor,
 )
 
+from src.processing.lexer import Lexer
+
 
 @hydra.main(config_path=".", config_name="config")
 def main(cfg: DictConfig) -> None:
@@ -33,20 +35,6 @@ def main(cfg: DictConfig) -> None:
     )
 
     # ---------------------------------
-    # -       convert authors         -
-    # ---------------------------------
-    os.makedirs(os.path.join(cfg.paths.input_dir, "converted_authors"), exist_ok=True)
-    processor = AuthorProcessor(**cfg.author_processor, data_format=cfg.data_format, logger_name="author_processor")
-    for part in parts:
-        logging.info(f"Converting authors in {part}")
-
-        processor(
-            in_fname=os.path.join(cfg.paths.input_dir, part),
-            out_fname=os.path.join(cfg.paths.input_dir, "converted_authors", part),
-            prepare_in_fnames=[os.path.join(cfg.paths.input_dir, part) for part in parts],
-        )
-
-    # ---------------------------------
     # -         drop outliers         -
     # ---------------------------------
 
@@ -59,62 +47,15 @@ def main(cfg: DictConfig) -> None:
 
         percentile_dir = None
         if part != "train":
-            percentile_dir = os.path.join(cfg.paths.percentile_dir, "train")
-        os.makedirs(os.path.join(cfg.paths.percentile_dir, part), exist_ok=True)
+            percentile_dir = os.path.join(cfg.paths.tokens_percentile_dir, "train")
+        os.makedirs(os.path.join(cfg.paths.tokens_percentile_dir, part), exist_ok=True)
 
         processor(
-            in_fname=os.path.join(cfg.paths.input_dir, "converted_authors", part),
+            in_fname=os.path.join(cfg.paths.input_dir, part),
             out_fname=os.path.join(cfg.paths.input_dir, "filtered_outliers", part),
-            prepare_n_tokens_dir=os.path.join(cfg.paths.percentile_dir, part),
+            prepare_n_tokens_dir=os.path.join(cfg.paths.tokens_percentile_dir, part),
             prepare_percentile_dir=percentile_dir,
         )
-
-    # -------------------------------------------
-    # - preprocess data into SourcererCC format -
-    # -------------------------------------------
-    os.makedirs(os.path.join(cfg.paths.deduplication_dir, "raw"), exist_ok=True)
-    for part_id, part in enumerate(parts):
-        processor = PreDeduplicationProcessor(
-            **cfg.pre_deduplication_processor,
-            project_id=part_id + 1,
-            data_format=cfg.data_format,
-            logger_name="prededupl_processor",
-        )
-
-        logging.info(f"Processing messages from {part} into SourcererCC format")
-        processor(
-            in_fname=os.path.join(cfg.paths.input_dir, "filtered_outliers", part),
-            out_fname=os.path.join(cfg.paths.deduplication_dir, "raw", f"{part}_message.txt"),
-            data_col="message",
-        )
-
-        logging.info(f"Processing diffs from {part} into SourcererCC format")
-        processor(
-            in_fname=os.path.join(cfg.paths.input_dir, "filtered_outliers", part),
-            out_fname=os.path.join(cfg.paths.deduplication_dir, "raw", f"{part}_diffs.txt"),
-            data_col="mods",
-        )
-
-    # stop here if there's no clones results
-    if not cfg.clones_ready:
-        return
-
-    # -----------------------------------
-    # -         drop duplicates         -
-    # -----------------------------------
-
-    processor = PostDeduplicationProcessor(
-        **cfg.post_deduplication_processor, data_format=cfg.data_format, logger_name="postdedupl_processor"
-    )
-    processor(
-        in_fname=os.path.join(cfg.paths.input_dir, "filtered_outliers", "train"),
-        out_fname=os.path.join(cfg.paths.input_dir, "filtered_outliers", "train_no_duplicates"),
-        prepare_in_path=os.path.join(cfg.paths.input_dir, "filtered_outliers"),
-        prepare_diff_clones_fname="results_messages_100_multi.pairs",
-        prepare_msg_clones_fname="results_diffs_100_multi.pairs",
-        prepare_deduplication_dir=cfg.paths.deduplication_dir,
-        prepare_parts=parts,
-    )
 
     # -----------------------------------
     # -         filter messages         -
@@ -129,7 +70,7 @@ def main(cfg: DictConfig) -> None:
             in_fname=os.path.join(
                 cfg.paths.input_dir,
                 "filtered_outliers",
-                f"{part}{'_no_duplicates' if part == 'train' else ''}",
+                part,
             ),
             out_fname=os.path.join(cfg.paths.input_dir, "filtered_msgs", part),
         )
@@ -144,6 +85,58 @@ def main(cfg: DictConfig) -> None:
         processor(
             in_fname=os.path.join(cfg.paths.input_dir, "filtered_msgs", part),
             out_fname=os.path.join(cfg.paths.input_dir, "filtered_diffs", part),
+        )
+
+    # -----------------------------------
+    # -            lex diffs            -
+    # -----------------------------------
+
+    os.makedirs(os.path.join(cfg.paths.input_dir, "lexed"), exist_ok=True)
+    os.makedirs(os.path.join(cfg.paths.input_dir, "tokenization"), exist_ok=True)
+    lexer = Lexer(**cfg.lexer, data_format=cfg.data_format, logger_name="lexer")
+    for part in parts:
+        os.makedirs(os.path.join(cfg.paths.literals_percentile_dir, part), exist_ok=True)
+
+        percentile_dir = None
+        if part != "train":
+            percentile_dir = os.path.join(cfg.paths.literals_percentile_dir, "train")
+
+        logging.info(f"Lexing {part}")
+        lexer(
+            in_fname=os.path.join(cfg.paths.input_dir, "filtered_diffs", part),
+            out_fname=os.path.join(cfg.paths.input_dir, "lexed", part),
+            delimiter_out_fname=os.path.join(cfg.paths.input_dir, "tokenization", part),
+            prepare_literals_len_dir=os.path.join(cfg.paths.literals_percentile_dir, part),
+            prepare_percentile_dir=percentile_dir,
+        )
+
+    # -------------------------------------------
+    # - preprocess data into SourcererCC format -
+    # -------------------------------------------
+
+    os.makedirs(os.path.join(cfg.paths.deduplication_dir, "raw"), exist_ok=True)
+    for part_id, part in enumerate(parts):
+        processor = PreDeduplicationProcessor(
+            **cfg.pre_deduplication_processor,
+            project_id=part_id + 1,
+            data_format=cfg.data_format,
+            logger_name="prededupl_processor",
+        )
+
+        logging.info(f"Processing messages from {part} into SourcererCC format")
+        processor(
+            in_fname=os.path.join(cfg.paths.input_dir, "lexed", part),
+            out_fname=os.path.join(cfg.paths.deduplication_dir, "raw", f"{part}_message.txt"),
+            data_col="message",
+            add_data_format=False,
+        )
+
+        logging.info(f"Processing diffs from {part} into SourcererCC format")
+        processor(
+            in_fname=os.path.join(cfg.paths.input_dir, "lexed", part),
+            out_fname=os.path.join(cfg.paths.deduplication_dir, "raw", f"{part}_diffs.txt"),
+            data_col="mods",
+            add_data_format=False,
         )
 
 

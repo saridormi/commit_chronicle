@@ -1,10 +1,9 @@
 data_format: jsonl
+n_train_examples: 200000
 
-lexer:
-  upper_percentile: 0.95
-  sep_token: 月
-  chunksize: 32000
-  n_workers: 16
+diff_extractor:
+  chunksize: 1000
+  n_workers: 8
 
 tokenizer:
   _target_: tokenizers.models.BPE
@@ -21,6 +20,5 @@ trainer:
   special_tokens: ['[UNK]', '[CLS]', '[SEP]', '[PAD]', '[MASK]', '\n']
 
 paths:
-  input_dir: test/extracted_data_jsonl
-  tokenizer_dir: test/tokenizer
-  percentile_dir: test/literals_len
+  input_dir: extracted_data_jsonl
+  tokenizer_dir: tokenizer

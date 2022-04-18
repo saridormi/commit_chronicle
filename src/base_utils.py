@@ -11,28 +11,28 @@ class BaseManager:
     This is a base class for writing & reading data.
     """
 
-    def prepare_outfile(self, out_fname: str, add_data_format: Optional[bool] = True):
+    def prepare_outfile(self, out_fname: str, add_data_format: Optional[bool] = True) -> None:
         """
-        Do what might be required before saving to chosen output format.
+        Does what might be required before saving to chosen output format.
         (e.g. write header in case of csv files)
         """
         raise NotImplementedError()
 
-    def append_to_outfile(self, data: pd.DataFrame, out_fname: str, add_data_format: Optional[bool] = True):
+    def append_to_outfile(self, data: pd.DataFrame, out_fname: str, add_data_format: Optional[bool] = True) -> None:
         """
-        Append current data chunk to chosen output format.
+        Appends current data chunk to chosen output format.
         """
         raise NotImplementedError()
 
     def read_input(self, in_fname: str, add_data_format: Optional[bool] = True, **kwargs):
         """
-        Read data according to chosen output format (accessing full dataset/reading in chunks).
+        Reads data according to chosen output format (accessing full dataset/reading in chunks).
         """
         raise NotImplementedError()
 
     def read_input_lazy(self, in_fname: str, add_data_format: Optional[bool] = True, **kwargs):
         """
-        Read data according to chosen output format (accessing full dataset in lazy fashion).
+        Reads data according to chosen output format (accessing full dataset in lazy fashion).
         """
         raise NotImplementedError()
 
@@ -42,9 +42,9 @@ class JsonlManager(BaseManager):
     This is a class for writing & reading jsonl data.
     """
 
-    def prepare_outfile(self, out_fname: str, add_data_format: Optional[bool] = True):
+    def prepare_outfile(self, out_fname: str, add_data_format: Optional[bool] = True) -> None:
         """
-        Clear target file.
+        Clears target file.
         """
         if add_data_format:
             out_fname = f"{out_fname}.jsonl"
@@ -56,9 +56,9 @@ class JsonlManager(BaseManager):
         data: pd.DataFrame,
         out_fname: str,
         add_data_format: Optional[bool] = True,
-    ):
+    ) -> None:
         """
-        Append current data chunk.
+        Appends current data chunk.
         """
         data = data.to_dict(orient="records")
 
@@ -70,7 +70,7 @@ class JsonlManager(BaseManager):
 
     def read_input(self, in_fname: str, add_data_format: Optional[bool] = True, **kwargs):
         """
-        Read jsonl data with pandas.
+        Reads jsonl data with pandas.
         """
         if add_data_format:
             in_fname = f"{in_fname}.jsonl"
@@ -79,7 +79,7 @@ class JsonlManager(BaseManager):
 
     def read_input_lazy(self, in_fname: str, add_data_format: Optional[bool] = True, **kwargs):
         """
-        Read jsonl data with dask.
+        Reads jsonl data with dask.
         """
         if add_data_format:
             in_fname = f"{in_fname}.jsonl"
@@ -126,10 +126,9 @@ class BaseProcessor:
             logger.addHandler(fh)
         return logger
 
-    def _prepare_outfile(self, out_fname: str, add_data_format: Optional[bool] = True):
+    def _prepare_outfile(self, out_fname: str, add_data_format: Optional[bool] = True) -> None:
         """
-        Do what might be required before saving to chosen output format.
-        (e.g. write header in case of csv files)
+        Does what might be required before saving to chosen output format.
         """
         self._data_manager.prepare_outfile(out_fname, add_data_format=add_data_format)
 
@@ -138,9 +137,9 @@ class BaseProcessor:
         data: Union[pd.DataFrame, List[str]],
         out_fname: str,
         add_data_format: Optional[bool] = True,
-    ):
+    ) -> None:
         """
-        Append current data chunk to chosen output format.
+        Appends current data chunk to chosen output format.
         """
         if isinstance(data, pd.DataFrame):
             self._data_manager.append_to_outfile(data, out_fname, add_data_format=add_data_format)
@@ -157,7 +156,7 @@ class BaseProcessor:
         **kwargs,
     ):
         """
-        Read data according to chosen output format.
+        Reads data according to chosen output format.
         """
         if read_lazy:
             return self._data_manager.read_input_lazy(in_fname, add_data_format=add_data_format, **kwargs)
@@ -165,47 +164,51 @@ class BaseProcessor:
             in_fname, add_data_format=add_data_format, chunksize=None if read_whole else self._chunksize, **kwargs
         )
 
-    def prepare(self, in_fname: str, **kwargs):
+    def prepare(self, in_fname: str, **kwargs) -> None:
         """
-        This method might perform any necessary actions before chunk processing begins.
+        Performs any necessary actions before data processing begins.
 
         Args:
-            - in_fname: path to read input data from
+            in_fname: Path to read input data from.
+            **kwargs: Arbitrary keyword arguments.
         """
         pass
 
     def process(self, chunk: pd.DataFrame, **kwargs) -> Union[pd.DataFrame, List[str]]:
         """
-        This method should implement chunk processing logic.
+        Implements chunk processing logic.
 
         Args:
-            chunk: small subset of original dataset
+            chunk: Small subset of original dataset.
+            **kwargs: Arbitrary keyword arguments.
 
         Returns:
-            This method returns list of strings in cases where only one column is necessary for further processing.
-            In other cases this method returns pandas dataframe.
+            List of strings in cases when only one column is necessary for further processing. In other cases, `pd.DataFrame`.
         """
         raise NotImplementedError()
 
-    def __call__(self, in_fname: str, out_fname: str, **kwargs):
+    def __call__(self, in_fname: str, out_fname: str, add_data_format: Optional[bool] = True, **kwargs) -> None:
         """
-        This method iterates over input data in chunks, processes it in some way and saves results to separate file.
+        Iterates over input data in chunks, processes it in some way and saves results to separate file.
 
         Args:
-            in_fname: path to read input data from
-            out_fname: path to save processed data to
+            in_fname: Path to read input data from.
+            out_fname: Path to save processed data to.
+            **kwargs: Arbitrary keyword arguments. Keyword arguments starting from prefix 'prepare_'
+                will be passed to method that is called before data processing,
+                all others - to method that processes each chunk.
         """
         prepare_kwargs = {key[len("prepare_") :]: value for key, value in kwargs.items() if key.startswith("prepare_")}
         process_kwargs = {key: value for key, value in kwargs.items() if not key.startswith("prepare_")}
 
         self.logger.info(f"Starting processing {in_fname}")
 
-        self._prepare_outfile(out_fname)
+        self._prepare_outfile(out_fname, add_data_format=add_data_format)
         self.prepare(in_fname, **prepare_kwargs)
 
         reader = self._read_input(in_fname)
         for chunk in tqdm(reader, leave=False):
             processed_chunk = self.process(chunk, **process_kwargs)
-            self._append_to_outfile(processed_chunk, out_fname)
+            self._append_to_outfile(processed_chunk, out_fname, add_data_format=add_data_format)
 
         self.logger.info(f"Finished processing {in_fname}")
