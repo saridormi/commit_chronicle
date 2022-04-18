@@ -1,12 +1,14 @@
-import hydra
-import os
 import logging
+import os
+
+import hydra
 from hydra.utils import to_absolute_path
 from omegaconf import DictConfig
-from src.tokenization.data_tokenization_utils import TrainingProcessor
+
+from .tokenization import TrainingProcessor
 
 
-@hydra.main(config_path=".", config_name="data_tokenization_config")
+@hydra.main(config_path="../configs", config_name="tokenize_data")
 def main(cfg: DictConfig) -> None:
     for key in cfg.paths:
         cfg.paths[key] = to_absolute_path(cfg.paths[key])

@@ -1,12 +1,14 @@
-import os
 import json
-import jsonlines
 import logging
+import os
+from typing import Any, Dict, List, Optional
+
+import jsonlines
 import pandas as pd
 from tqdm import tqdm
-from typing import List, Dict, Any, Optional
 from transformers import AutoTokenizer, PreTrainedTokenizerFast
-from ..base_utils import BaseProcessor
+
+from ..utils import BaseProcessor
 
 
 class TrainingProcessor(BaseProcessor):

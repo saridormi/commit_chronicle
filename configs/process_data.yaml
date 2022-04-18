@@ -37,4 +37,3 @@ paths:
   tokens_percentile_dir: n_tokens
   literals_percentile_dir: literals_len
   deduplication_dir: deduplication
-

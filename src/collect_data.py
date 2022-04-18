@@ -1,23 +1,23 @@
-import os
 import json
 import logging
+import os
+
 import hydra
-
 from hydra.utils import to_absolute_path
-from omegaconf import DictConfig
 from joblib import Parallel, delayed
+from omegaconf import DictConfig
 
-from src.collection.utils import RepoProcessor
+from .collection import RepoProcessor
 
 
-@hydra.main(config_path=".", config_name="config")
+@hydra.main(config_path="../configs", config_name="collect_data")
 def main(cfg: DictConfig) -> None:
     for key in cfg.paths:
         cfg.paths[key] = to_absolute_path(cfg.paths[key])
 
     parts = ["train"] + sorted(
         [
-            part
+            part.split(".")[0]
             for part in os.listdir(cfg.paths.input_dir)
             if os.path.isdir(os.path.join(cfg.paths.input_dir, part)) and "train" not in part
         ]

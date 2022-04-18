@@ -1,15 +1,17 @@
-import hydra
-import os
 import logging
+import os
+
+import hydra
 from hydra.utils import instantiate, to_absolute_path
 from omegaconf import DictConfig
 from tokenizers import Tokenizer
 from tokenizers.pre_tokenizers import Sequence, WhitespaceSplit
 from tokenizers.processors import TemplateProcessing
-from src.tokenization.diff_extractor import DiffExtractor
+
+from .tokenization import DiffExtractor
 
 
-@hydra.main(config_path=".", config_name="train_tokenizer_config")
+@hydra.main(config_path="../configs", config_name="train_tokenizer")
 def main(cfg: DictConfig) -> None:
     for key in cfg.paths:
         cfg.paths[key] = to_absolute_path(cfg.paths[key])

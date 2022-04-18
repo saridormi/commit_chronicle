@@ -13,64 +13,7 @@ This repository contains code for collecting and processing diffs, messages and 
 
 ## Ready-to-use dataset 
 
-> :exclamation: This section is about **old** Java dataset, current data format is different.
-
-Dataset is currently available **only to JetBrains employees** at [Google Drive](https://drive.google.com/drive/folders/1Z3LgzG23KcZGln53ta4WVKBPp0S8_XhZ?usp=sharing).
-
-<details>
-<summary>:yellow_heart: click here for more information</summary>
-
-There are two options:
-* data right after collection with minimum processing is stored in **raw_data** folder
-
-> :floppy_disk: At this point dataset takes around 16GB of disk space.
-
-Data from each repo is saved as separate `.gz` archive. Inside it is a `.jsonl` file where each line has keys `author`, `date`, `message` and `diff`. 
-* `author` is a list with information (name/nickname and email) about person who made commit
-* `date` is a date (with time) when commit was made
-* `message` is a commit message
-* `diff` is a list of diffs for each file modified in commit
-
-Example:
-
-| author | date | message | diff |
-|:-:|:-:|:-:|:-:|
-| [name, email] | 2021-01-01 00:00:00 | cool commit message | [changes in file1, changes in file2, ...]|
-
-Diff for each file is basically `git diff` output string but special git heading like `@@ -6,22 +6,24 @@` is omitted and it additionally contains special token `<FILE>` in line with filenames. 
-
-Preprocessing at this point includes separating input lines with `<nl>` token and adding whitespaces around punctuation marks (both in messages and in diffs).
-
-* data after all filtering is stored as **filtered_and_deduplicated_df.csv** file
-
-> :floppy_disk: At this point dataset takes around 4GB of disk space.
-
-Data from all repos is stored in one file. It has the following columns:
-* `author`: unique integer for each (name, email) pair in dataset
-* `date`: date (with time) when commit was made
-* `message`: commit message
-* `diff`: single diff for all modified files
-* `num_mods`: number of modified files
-* `repo`: GitHub repository name
-* `sample_id`: service column for deduplication *(maybe I should drop it)*
-* `project_id`: 1 if commit is in train part of dataset, 2 - if in validation, 3 - if in test 
-
-Diff is basically `git diff` output string but some special info like `index e345a66..f841d45` or `@@ -6,22 +6,24 @@` is omitted and it additionally contains special token `<FILE>` in lines with filenames. 
-
-Message is, well, commit message. 
-
-Note that in both cases input lines are separated with `<nl>` token and punctuation marks are additionally separated by whitespaces.
-
-Super simple examples of data format in cases of modifying, adding, deleting or renaming file:
-
-|author|date|diff|message|num_mods|repo|sample_id|project_id|
-|:-:|:-:|:-:|:-:|:-:|:-:|:-:|:-:|
-|1|2021-01-01 00:00:00| <FILE> conf / config . yaml \<nl\> - batch_size : 4 \<nl\> + batch_size : 8|Modify config|1|organization/repo|1|1|
-|2|2021-01-01 00:00:00| new file \<nl\> <FILE> conf / config . yaml \<nl\> + batch_size : 8|Add config|1|organization/repo|2|1|
-|1|2021-01-01 00:00:00| deleted file \<nl\> <FILE> conf / config . yaml \<nl\> - batch_size : 4|Delete config|1|organization/repo|3|1|
-|2|2021-01-01 00:00:00| rename from conf / config . yaml \<nl\> rename to conf / conf . yaml|Rename config|1|organization/repo|4|1|
-
-</details>
+> :star2: work in progress: this section will contain a link to access a multilingual commits dataset
 
 ## Data collection
 
@@ -131,7 +74,7 @@ Follow these steps:
 
 5. **Define configuration**
 
-      Configuration is defined at [`src/collection/config.yaml`](src/collection/config.yaml).
+      Configuration is defined at [`configs/collect_data.yaml`](configs/collect_data.yaml).
 
       <details>
       <summary>:yellow_heart: click here for more information about possible options</summary>
@@ -179,7 +122,7 @@ Follow these steps:
 
     To start collecting data, run the following command:
     ```
-    python -m src.collection.collect_data
+    python -m src.collect_data
     ```
 
 ### Data format
@@ -275,7 +218,7 @@ Follow these steps:
 
 4. **Define configuration**
 
-    Configuration is defined at [`src/processing/config.yaml`](src/processing/config.yaml).   
+    Configuration is defined at [`configs/process_data.yaml`](configs/process_data.yaml).   
 
     <details>
       <summary>:yellow_heart: click here for more information about possible options</summary>
@@ -284,18 +227,8 @@ Follow these steps:
 
       ```
       data_format: ...
-      clones_ready: ...
-   
-      author_processor:
-         ...
    
       outliers_processor:
-         ...
-   
-      pre_deduplication_processor:
-         ...
-   
-      post_deduplication_processor:
          ...
    
       message_processor:
@@ -304,9 +237,23 @@ Follow these steps:
       diff_processor:
          ...
    
+      lexer:
+         ...
+      
+      pre_deduplication_processor:
+         ...
+   
+      post_deduplication_processor:
+         ...
+   
+      final_processor:
+         ...
+   
       paths:
          input_dir: ...
-         percentile_dir: ...
+         licenses_dir: ...
+         tokens_percentile_dir: ...
+         literals_percentile_dir: ...
          deduplication_dir: ...
       ```
    
@@ -316,7 +263,9 @@ Follow these steps:
       
         Paths are moved to separate key to convert them all to absolute paths via hydra.
         * `input_dir`: directory to read data from
-        * `percentile_dir`: directory to save percentiles for # tokens
+        * `licenses_dir`: directory to read repository-license mapping from
+        * `tokens_percentile_dir`: directory to save percentiles for # tokens
+        * `literals_percentile_dir`: directory to save percentiles for literals lengths
         * `deduplication_dir`: directory to save clone search results
 
       Each processor accepts two keyword arguments:
@@ -328,19 +277,29 @@ Follow these steps:
         * `lower_percentile`: # tokens percentile to use as lower bound (should be in (0, 1) range)
         * `upper_percentile`: # tokens percentile to use as upper bound (should be in (0, 1) range)
         * `diff_upper_bound`: constant upper bound for # tokens in diffs (optional)
-    </details>
+      * `lexer`:
+        * `upper_percentile`: literals' lengths percentile to use as upper bound (should be in (0, 1) range)
+        * `sep_char`: character to use as a delimiter between lexemes (important: should be a single character)
+   </details>
     
-6. **Process data**
+5. **Process data**
 
     To start processing data, run the following command:
 
     ```
-    python -m src.processing.process_data
+    python -m src.process_data
+    ```
+   
+    Note that the script above doesn't include deduplication. When you have files with ids of duplicated entries ready, 
+    run the following command:
+    
+    ```
+    python -m src.drop_clones
     ```
 
 ### Stages
 
-> :star2: work in progress
+> :star2: work in progress: this section will contain a more detailed description of processing stages
 
 ## Training tokenizer
 
@@ -379,7 +338,7 @@ Follow these steps:
 
 4. **Define configuration**
 
-   Configuration is defined at [`src/tokenization/train_tokenizer_config.yaml`](src/tokenization/train_tokenizer_config.yaml).   
+   Configuration is defined at [`configs/train_tokenizer.yaml`](configs/train_tokenizer.yaml).   
 
     <details>
       <summary>:yellow_heart: click here for more information about possible options</summary>
@@ -388,12 +347,11 @@ Follow these steps:
 
       ```
       data_format: ...
-
-      lexer:
-         upper_percentile: ...
-         sep_token: ...
-         chunksize: ...
-         n_workers: ...
+      n_train_examples: ...
+   
+      diff_extractor:
+        chunksize: ...
+        n_workers: ...
    
       tokenizer:
          _target_: tokenizers.models.BPE
@@ -401,7 +359,7 @@ Follow these steps:
    
       pre_tokenizer:
           _target_: tokenizers.pre_tokenizers.CharDelimiterSplit
-          ...
+          sep_token: ...
    
       trainer:
          _target_: tokenizers.trainers.BpeTrainer
@@ -414,17 +372,16 @@ Follow these steps:
       ```
    
       * `data_format`: format to use for reading & writing data; currently, only `jsonl` is supported
+      * `n_train_examples`: how many diffs from train will be used for tokenizer training     
+      * `diff_extractor`
    
-      * `lexer`
-      
-        These arguments are related to custom lexer class.
-        * `upper_percentile`: literals' lengths percentile to use as upper bound (should be in (0, 1) range)
-        * `sep_token`: which character use as delimiter (important: should be a single character)
+        This class is used to extract given number of diffs from train part of dataset. It accepts the following arguments:
         * `chunksize`: # of examples in single data chunk (large files are processed in chunks) (optional, default value is 1000)
-        * `n_workers`: # of threads for parallel data processing (optional, default value is 1)
-    
-      * `tokenizer`/`pre_tokenizer`/`trainer`
+        * `n_workers`: # of threads for data processing (optional, default value is 1)
    
+      * `tokenizer`/`pre_tokenizer`/`trainer`
+        > :exclamation: Make sure that `sep_token` for `pre_tokenizer` is the same as `sep_char` used for `lexer` at [`configs/process_data.yaml`](configs/process_data.yaml).
+      
         All arguments except `_target_` are passed to corresponding target class. 
       See [🤗 Tokenizers documentation](https://huggingface.co/docs/tokenizers/python/v0.9.4/) for more information.
       
@@ -434,17 +391,14 @@ Follow these steps:
           * `input_dir`: directory to read data from
           * `tokenizer_dir`: directory to save tokenizer to
           * `percentile_dir`: directory to save percentiles for literals` lengths
-      
-      There is also an option to add key `fnames` with paths to files you'd like to train tokenizer on. 
-    In that case, custom lexer class would not be used.
-          </details>
+   </details>
 
 6. **Train tokenizer**
 
     To start training tokenizer, run the following command:
 
     ```
-    python -m src.tokenization.train_tokenizer
+    python -m src.train_tokenizer
     ```
 
 ## Data tokenization
@@ -481,7 +435,7 @@ Follow these steps:
 
 4. **Define configuration**
 
-   Configuration is defined at [`src/tokenization/data_tokenization_config.yaml`](src/tokenization/data_tokenization_config.yaml).   
+   Configuration is defined at [`configs/tokenize_data.yaml`](configs/tokenize_data.yaml).   
 
     <details>
       <summary>:yellow_heart: click here for more information about possible options</summary>
@@ -537,5 +491,5 @@ Follow these steps:
    To start tokenizing data, run the following command:
 
     ```
-    python -m src.tokenization.tokenize_data
+    python -m src.tokenize_data
     ```

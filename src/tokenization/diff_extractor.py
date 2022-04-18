@@ -3,7 +3,7 @@ from typing import Optional
 import pandas as pd
 from tqdm import tqdm
 
-from ..base_utils import BaseProcessor
+from ..utils import BaseProcessor
 
 
 class DiffExtractor(BaseProcessor):

@@ -1,23 +1,14 @@
-import os
 import logging
-import hydra
+import os
 
+import hydra
 from hydra.utils import to_absolute_path
 from omegaconf import DictConfig
 
-from src.processing.utils import (
-    AuthorProcessor,
-    OutliersProcessor,
-    PreDeduplicationProcessor,
-    PostDeduplicationProcessor,
-    MessageProcessor,
-    DiffProcessor,
-)
-
-from src.processing.lexer import Lexer
+from .processing import DiffProcessor, Lexer, MessageProcessor, OutliersProcessor, PreDeduplicationProcessor
 
 
-@hydra.main(config_path=".", config_name="config")
+@hydra.main(config_path="../configs", config_name="process_data")
 def main(cfg: DictConfig) -> None:
     for key in cfg.paths:
         cfg.paths[key] = to_absolute_path(cfg.paths[key])

@@ -1,15 +1,17 @@
-import os
 import json
+import os
+from typing import Dict, Iterable, List, Optional, Tuple
+
 import numpy as np
 import pandas as pd
-from typing import List, Iterable, Optional, Dict, Tuple
-from tqdm import tqdm
 from joblib import Parallel, delayed
 from pygments import lex
-from pygments.token import _TokenType, Literal, Text
+from pygments.lexers import TextLexer, guess_lexer_for_filename
+from pygments.token import Literal, Text, _TokenType
 from pygments.util import ClassNotFound
-from pygments.lexers import guess_lexer_for_filename, TextLexer
-from ..base_utils import BaseProcessor
+from tqdm import tqdm
+
+from ..utils import BaseProcessor
 
 
 class Lexer(BaseProcessor):
