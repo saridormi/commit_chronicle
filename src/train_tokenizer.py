@@ -5,7 +5,6 @@ import hydra
 from hydra.utils import instantiate, to_absolute_path
 from omegaconf import DictConfig
 from tokenizers import Tokenizer
-from tokenizers.pre_tokenizers import ByteLevel
 from tokenizers.processors import TemplateProcessing
 
 from .tokenization import DiffExtractor
@@ -37,7 +36,7 @@ def main(cfg: DictConfig) -> None:
     # -----------------------------
 
     tokenizer = Tokenizer(instantiate(cfg.tokenizer))
-    tokenizer.pre_tokenizer = ByteLevel()
+    tokenizer.pre_tokenizer = instantiate(cfg.pre_tokenizer)
     tokenizer.post_processor = TemplateProcessing(
         single="[CLS] $A [SEP]",
         pair="[CLS] $A [SEP] $B:1 [SEP]:1",

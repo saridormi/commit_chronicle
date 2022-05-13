@@ -279,7 +279,6 @@ Follow these steps:
         * `diff_upper_bound`: constant upper bound for # tokens in diffs (optional)
       * `lexer`:
         * `upper_percentile`: literals' lengths percentile to use as upper bound (should be in (0, 1) range)
-        * `sep_char`: character to use as a delimiter between lexemes (important: should be a single character)
    </details>
     
 5. **Process data**
@@ -305,12 +304,6 @@ Follow these steps:
 
 This repo also contains code for training custom tokenizer on diffs from collected data
 via [🤗 Tokenizers](https://huggingface.co/tokenizers/) library.
-
-> :exclamation: Custom lexer class is used for pre-tokenization. Currently, instead of actually splitting input 
-> on tokens, it inserts special delimiter.
-> Tokenizer is then trained (and saved) with 
-> [CharDelimiterSplit](https://huggingface.co/docs/tokenizers/python/v0.9.4/components.html#pre-tokenizers) pre-tokenizer
-> on this delimiter.
 
 ### How to use
 
@@ -350,6 +343,7 @@ Follow these steps:
       n_train_examples: ...
    
       diff_extractor:
+        upper_percentile: ...
         chunksize: ...
         n_workers: ...
    
@@ -358,8 +352,8 @@ Follow these steps:
          ...
    
       pre_tokenizer:
-          _target_: tokenizers.pre_tokenizers.CharDelimiterSplit
-          sep_token: ...
+          _target_: tokenizers.pre_tokenizers.ByteLevel
+          ...
    
       trainer:
          _target_: tokenizers.trainers.BpeTrainer
@@ -372,15 +366,16 @@ Follow these steps:
       ```
    
       * `data_format`: format to use for reading & writing data; currently, only `jsonl` is supported
-      * `n_train_examples`: how many diffs from train will be used for tokenizer training     
+      * `n_train_examples`: how many diffs from train will be used for tokenizer training (optional, 
+         remove this key to use all diffs)
       * `diff_extractor`
    
         This class is used to extract given number of diffs from train part of dataset. It accepts the following arguments:
+        * `upper_percentile`: diffs' lengths percentile to use as upper bound (should be in (0, 1) range)
         * `chunksize`: # of examples in single data chunk (large files are processed in chunks) (optional, default value is 1000)
         * `n_workers`: # of threads for data processing (optional, default value is 1)
    
       * `tokenizer`/`pre_tokenizer`/`trainer`
-        > :exclamation: Make sure that `sep_token` for `pre_tokenizer` is the same as `sep_char` used for `lexer` at [`configs/process_data.yaml`](configs/process_data.yaml).
       
         All arguments except `_target_` are passed to corresponding target class. 
       See [🤗 Tokenizers documentation](https://huggingface.co/docs/tokenizers/python/v0.9.4/) for more information.
@@ -446,7 +441,6 @@ Follow these steps:
       data_format: ...
 
       training_processor:
-         blocksize: ...
          chunksize: ...
          clean_temp_files: ...
          msg_tokenizer_name: ...
@@ -464,11 +458,12 @@ Follow these steps:
       * `data_format`: format to use for reading & writing data; currently, only `jsonl` is supported
    
       * `training_processor`:
-        * `blocksize`: # of bytes in single block (in that case, [`dask`](https://docs.dask.org/en/stable/) is used to process whole large file lazily)
         * `chunksize`: # of examples in single data chunk (large files are processed in chunks)
         * `clean_temp_files`: True to remove temporary files, False to keep (optional, default value is True)
-        * `msg_tokenizer_name`: pretrained name for message tokenizer
-        (see [🤗 Transformers documentation](https://huggingface.co/transformers/v4.2.2/model_doc/auto.html#transformers.AutoTokenizer.from_pretrained) for more information)
+        * `diff_tokenizer_name_or_path`: name on HuggingFace Hub or local path to diff tokenizer
+           (see [🤗 Transformers documentation](https://huggingface.co/transformers/v4.2.2/model_doc/auto.html#transformers.AutoTokenizer.from_pretrained) for more information)
+        * `msg_tokenizer_name_or_path`: name on HuggingFace Hub or local path to message tokenizer
+           (see [🤗 Transformers documentation](https://huggingface.co/transformers/v4.2.2/model_doc/auto.html#transformers.AutoTokenizer.from_pretrained) for more information)
         * `diff_kwargs`: 
         
           All keyword arguments under this key are passed to diff tokenizer. 
@@ -481,7 +476,6 @@ Follow these steps:
       
       * `paths`:
         Paths are moved to separate key to convert them all to absolute paths via hydra.
-        * `diff_tokenizer_path`: path to load diff tokenizer from
         * `input_dir`: directory to read data from
         * `output_dir`: directory to save tokenized data to
    </details>

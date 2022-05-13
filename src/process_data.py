@@ -5,7 +5,13 @@ import hydra
 from hydra.utils import to_absolute_path
 from omegaconf import DictConfig
 
-from .processing import DiffProcessor, Lexer, MessageProcessor, OutliersProcessor, PreDeduplicationProcessor
+from .processing import (
+    DiffProcessor,
+    Lexer,
+    MessageProcessor,
+    OutliersProcessor,
+    PreDeduplicationProcessor,
+)
 
 
 @hydra.main(config_path="../configs", config_name="process_data")

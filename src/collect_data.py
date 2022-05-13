@@ -17,7 +17,7 @@ def main(cfg: DictConfig) -> None:
 
     parts = ["train"] + sorted(
         [
-            part.split(".")[0]
+            part
             for part in os.listdir(cfg.paths.input_dir)
             if os.path.isdir(os.path.join(cfg.paths.input_dir, part)) and "train" not in part
         ]
