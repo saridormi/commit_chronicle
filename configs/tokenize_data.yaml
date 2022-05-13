@@ -1,19 +1,17 @@
 data_format: jsonl
 
 training_processor:
-  chunksize: 5000
-  blocksize: 1e8
-  clean_temp_files: true
-  msg_tokenizer_name: distilgpt2
+  chunksize: 1000
+  clean_temp_files: false
+  diff_tokenizer_name_or_path: tokenizer/diff_tokenizer.json
+  msg_tokenizer_name_or_path: distilgpt2
   diff_kwargs:
-    truncation: true
-    max_length: 500
+    truncation: false
     return_attention_mask: false
   msg_kwargs:
-    truncation: true
+    truncation: false
     return_attention_mask: false
 
 paths:
-  diff_tokenizer_path: tokenizer/diff_tokenizer.json
   input_dir: extracted_data_jsonl
   output_dir: processed_data
