@@ -37,26 +37,20 @@ def main(cfg: DictConfig) -> None:
     processor(
         in_fname=os.path.join(cfg.paths.input_dir, "lexed", "train"),
         out_fname=os.path.join(cfg.paths.input_dir, "lexed", "train_no_duplicates"),
-        prepare_in_path=os.path.join(cfg.paths.input_dir, "lexed"),
-        prepare_diff_clones_fname="results_messages_100_multi.pairs",
-        prepare_msg_clones_fname="results_diffs_100_multi.pairs",
-        prepare_deduplication_dir=cfg.paths.deduplication_dir,
-        prepare_parts=parts,
+        prepare_diff_clones_fname=os.path.join(cfg.paths.deduplication_dir, "results_messages_100.pairs"),
+        prepare_msg_clones_fname=os.path.join(cfg.paths.deduplication_dir, "results_diffs_100.pairs"),
     )
     processor(
         in_fname=os.path.join(cfg.paths.input_dir, "tokenization", "train"),
         out_fname=os.path.join(cfg.paths.input_dir, "tokenization", "train_no_duplicates"),
         prepare_is_ready=True,
-        prepare_in_path=os.path.join(cfg.paths.input_dir, "lexed"),
-        prepare_diff_clones_fname="results_messages_100_multi.pairs",
-        prepare_msg_clones_fname="results_diffs_100_multi.pairs",
-        prepare_deduplication_dir=cfg.paths.deduplication_dir,
-        prepare_parts=parts,
+        prepare_diff_clones_fname=os.path.join(cfg.paths.deduplication_dir, "results_messages_100.pairs"),
+        prepare_msg_clones_fname=os.path.join(cfg.paths.deduplication_dir, "results_diffs_100.pairs"),
     )
 
-    # ---------------------------------
-    # -       work on metadata        -
-    # ---------------------------------
+    # -----------------------------
+    # -       final touch         -
+    # -----------------------------
 
     processor = FinalProcessor(**cfg.final_processor, data_format=cfg.data_format, logger_name="final_processor")
     for part in parts:

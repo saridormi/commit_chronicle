@@ -29,7 +29,7 @@ post_deduplication_processor:
   n_workers: 8
 
 final_processor:
-  chunksize: 256
+  chunksize: 1000
 
 paths:
   input_dir: extracted_data_jsonl

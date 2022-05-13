@@ -8,9 +8,9 @@ from ..utils import BaseProcessor
 
 
 class FinalProcessor(BaseProcessor):
-    """This class is used to perform several simple operations with dataset before making it public.
+    """This class is used to perform several simple operations with dataset.
 
-    It deletes `mods` field, converts authors' personal information into unique ids
+    It deletes `mods` field, drops examples with empty diffs, converts authors' personal information into unique ids
     and adds license type for each repository.
 
     Args:
@@ -44,8 +44,10 @@ class FinalProcessor(BaseProcessor):
         """
         if "train" in in_fname:
             for fname in in_fnames:
+                if "train" in fname:
+                    fname = in_fname
                 reader = self._read_input(fname)
-                for chunk in tqdm(reader, desc=f"Reading authors from {in_fname}", leave=False):
+                for chunk in tqdm(reader, desc=f"Reading authors from {fname}", leave=False):
                     self._authors.update((tuple(author) for author in chunk["author"].tolist()))
 
             self._authors_map = {author: i for i, author in enumerate(self._authors)}
@@ -60,6 +62,7 @@ class FinalProcessor(BaseProcessor):
 
     def process(self, chunk: pd.DataFrame, **kwargs) -> pd.DataFrame:
         chunk = chunk.drop(columns="mods")
-        chunk["author"] = chunk["author"].apply(tuple).map(self._authors_map)
-        chunk["license"] = chunk["repo"].map(self._repo_license_map)
+        chunk = chunk.loc[chunk["diff"].str.len() > 0]
+        chunk["author"] = [self._authors_map[tuple(author)] for author in chunk["author"].tolist()]
+        chunk["license"] = [self._repo_license_map[repo] for repo in chunk["repo"].tolist()]
         return chunk

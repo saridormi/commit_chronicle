@@ -1,7 +1,5 @@
-import os
-from typing import List, Optional, Set
+from typing import Dict, List, Optional, Set, Tuple
 
-import jsonlines
 import pandas as pd
 from tqdm import tqdm
 
@@ -26,182 +24,117 @@ class PostDeduplicationProcessor(BaseProcessor):
         logger_name: Optional[str] = None,
     ):
         super().__init__(chunksize=chunksize, n_workers=n_workers, data_format=data_format, logger_name=logger_name)
-        self._train_full_clones: Set[str] = set()
         self._ids_to_drop: Set[int] = set()
 
-    def _extract_metadata(self, in_path: str, deduplication_dir: str, parts: List[str]) -> None:
-        """Saves commits metadata (author, timestamp, repo, hash) from main dataset files to separate files.
+    def _get_outer_clones(self, clones_fname: str) -> List[Dict[str, List]]:
+        """Processes clones coming from different dataset parts.
 
         Args:
-            in_path: Path to folder where input data is stored.
-            parts: List of all parts in input dataset.
-            deduplication_dir: Path to folder where files with found clones are stored.
+            clones_fname: Part to file to read clones from.
+
+        Returns:
+            A list where each clone group is represented as dictionary with `ex1` and `ex2` keys. `ex2` is an
+             example from val/test part and `ex1` is a set of its clones from train.
         """
+        clones_df = pd.read_csv(clones_fname, header=None, names=["part_id1", "id1", "part_id2", "id2"])
+        outer_df = clones_df.loc[(clones_df["part_id1"] == 1) & (clones_df["part_id2"].isin([2, 4]))].copy()
+        outer_df["ex1"] = list(zip(outer_df.part_id1, outer_df.id1))
+        outer_df["ex2"] = list(zip(outer_df.part_id2, outer_df.id2))
+        outer_df = outer_df.groupby("ex2").agg(ex1=("ex1", list)).reset_index()
+        return outer_df[["ex1", "ex2"]].to_dict(orient="records")
 
-        full_out_fname = os.path.join(deduplication_dir, "metadata")
-        self._prepare_outfile(full_out_fname)
+    def _get_inner_clones(self, clones_fname: str, part_id: Optional[int] = 1) -> List[Set[Tuple[int, int]]]:
+        """Processes clones coming from the same dataset part.
 
-        for i, part in enumerate(parts):
-            self.logger.info(f"Extracting metadata from {part}")
+        Args:
+            clones_fname: Part to file to read clones from.
+            part_id: Which dataset part to process (default value is 1, corresponding to train).
 
-            part_out_fname = os.path.join(deduplication_dir, f"{part}_metadata")
-            self._prepare_outfile(part_out_fname)
-
-            reader = self._read_input(os.path.join(in_path, part))
-
-            for chunk in tqdm(reader, desc=f"Iterating over {part} to extract metadata"):
-                chunk["project_id"] = i + 1
-                self._append_to_outfile(
-                    chunk[["project_id", "id", "author", "date", "hash", "repo"]],
-                    part_out_fname,
-                )
-                self._append_to_outfile(
-                    chunk[["project_id", "id", "author", "date", "hash", "repo"]],
-                    full_out_fname,
-                )
-
-    def _add_metadata(self, in_fname: str, out_fname: str, deduplication_dir: str):
-        """Adds metadata to each pair of clones.
-
-        Initially clones are created in a format `project_id1,sample_id1,project_id2,sample_id2`, we add metadata about
-            each example for further use.
+        Returns:
+            A list where each clone group is represented as set of (part_id, id) tuples. Clone groups are disjoint,
+             each example appears only in one clone group.
         """
-        self.logger.info(f"Adding metadata to {in_fname}")
-        df = self._read_input(os.path.join(deduplication_dir, "metadata"), read_whole=True).sort_values(
-            by=["project_id", "id"]
-        )
-        df.sort_index(axis=1, inplace=True)
-        sorted_cols = {col: i for i, col in enumerate(df.columns.tolist())}
+        clones_df = pd.read_csv(clones_fname, header=None, names=["part_id1", "id1", "part_id2", "id2"])
+        inner_df = clones_df.loc[(clones_df["part_id1"] == part_id) & (clones_df["part_id2"] == part_id)].copy()
+        inner_df["ex1"] = list(zip(inner_df.part_id1, inner_df.id1))
+        inner_df["ex2"] = list(zip(inner_df.part_id2, inner_df.id2))
+        inner_df = inner_df.groupby("ex1").agg(ex2=("ex2", set)).sort_index(ascending=False)
+        new_clones = {}
+        for x, x_clones in tqdm(inner_df["ex2"].iteritems(), total=inner_df.shape[0], desc=f"Processing inner clones"):
+            x_clones.add(x)
+            if any(x in new_clones[key] for key in new_clones):
+                continue
+            new_clones[x] = x_clones
 
-        # fast indexing on SourcererCC ids
-        indexes = {}
-        for idx, row in tqdm(df.iterrows()):
-            indexes[(row["project_id"], row["id"])] = idx
-        data = df.to_numpy()
+        return [new_clones[key] for key in new_clones]
 
-        # clear target file
-        open(out_fname, "w").close()
+    def _get_outer_ids_to_drop(self, msg_clones_fname: str, diff_clones_fname: str) -> None:
+        """Aggregates ids of train examples that are duplicate to val/test examples either in terms of messages or
+        in terms of diffs.
 
-        metadata = []
+        Args:
+            msg_clones_fname: Part to file to read message clones from.
+            diff_clones_fname: Part to file to read diff clones from.
+        """
+        # get train clones by messages and by diffs
+        msg_clones = self._get_outer_clones(msg_clones_fname)
+        diff_clones = self._get_outer_clones(diff_clones_fname)
 
-        with open(in_fname, "r") as file:
-            for i, line in tqdm(enumerate(file), desc=f"Iterating over {in_fname} to add metadata"):
-                pr_1, s_1, pr_2, s_2 = (int(j) for j in line.strip().split(","))
-                ex1 = data[indexes[(pr_1, s_1)]]
-                ex2 = data[indexes[(pr_2, s_2)]]
+        # drop all message clones from train
+        for group in msg_clones:
+            self._ids_to_drop.update([ex[1] for ex in group["ex1"]])
+        # drop all diffs clones from train
+        for group in diff_clones:
+            self._ids_to_drop.update([ex[1] for ex in group["ex1"]])
 
-                metadata.append(
-                    {
-                        "part_id1": ex1[sorted_cols["project_id"]],
-                        "id1": ex1[sorted_cols["id"]],
-                        "repo1": ex1[sorted_cols["repo"]],
-                        "hash1": ex1[sorted_cols["hash"]],
-                        "part_id2": ex2[sorted_cols["project_id"]],
-                        "id2": ex2[sorted_cols["id"]],
-                        "repo2": ex2[sorted_cols["repo"]],
-                        "hash2": ex2[sorted_cols["hash"]],
-                    }
-                )
-
-                if i % self._chunksize == 0:
-                    with jsonlines.open(out_fname, mode="a") as writer:
-                        writer.write_all(metadata)
-                    metadata = []
-
-        if len(metadata) > 0:
-            with jsonlines.open(out_fname, mode="a") as writer:
-                writer.write_all(metadata)
-
-    def _get_full_clones(self, msg_clones_fname: str, diff_clones_fname: str, out_fname: str):
-        """Builds a set of ids of examples from train which are completely identical to examples from train/val/test
-            (both diffs and messages are the same).
+    def _get_inner_ids_to_drop(self, msg_clones_fname: str, diff_clones_fname: str):
+        """
 
         Args:
             msg_clones_fname: Path to file with clones in terms of messages.
             diff_clones_fname: Path to file with clones in terms of diffs.
             out_fname: Path to save resulting full clones.
         """
-        # get train clones by messages
-        train_msgs_clones = set()
-        with jsonlines.open(msg_clones_fname, "r") as reader:
-            for line in tqdm(reader, desc="Reading message clones"):
-                if line["part_id1"] == 1 and line["part_id2"] != 1:
-                    train_msgs_clones.add(
-                        f"{line['part_id1']},{line['id1']},{line['repo1']},{line['hash1']},{line['part_id2']},{line['id2']},{line['repo2']},{line['hash2']}\n"
-                    )
-                elif line["part_id2"] == 1 and line["part_id1"] != 1:
-                    train_msgs_clones.add(
-                        f"{line['part_id2']},{line['id2']},{line['repo2']},{line['hash2']},{line['part_id1']},{line['id1']},{line['repo1']},{line['hash1']}\n"
-                    )
+        # get train clones by messages and by diffs
+        msg_clones = self._get_inner_clones(msg_clones_fname, part_id=1)
+        diff_clones = self._get_inner_clones(diff_clones_fname, part_id=1)
 
-        # get train clones by diffs
-        train_diffs_clones = set()
-        with jsonlines.open(diff_clones_fname, "r") as reader:
-            for line in tqdm(reader, desc="Reading diff clones"):
-                if line["part_id1"] == 1 and line["part_id2"] != 1:
-                    train_diffs_clones.add(
-                        f"{line['part_id1']},{line['id1']},{line['repo1']},{line['hash1']},{line['part_id2']},{line['id2']},{line['repo2']},{line['hash2']}\n"
-                    )
-                elif line["part_id2"] == 1 and line["part_id1"] != 1:
-                    train_diffs_clones.add(
-                        f"{line['part_id2']},{line['id2']},{line['repo2']},{line['hash2']},{line['part_id1']},{line['id1']},{line['repo1']},{line['hash1']}\n"
-                    )
+        # aggregate full train clones
+        full_clones = []
+        for cur_msg_clones in tqdm(msg_clones, total=len(msg_clones), desc="Processing full clones"):
+            for cur_diff_clones in diff_clones:
+                cur_full_clones = cur_msg_clones & cur_diff_clones
+                if len(cur_full_clones) > 1:
+                    full_clones.append(list(cur_full_clones))
 
-        self._train_full_clones = train_msgs_clones.intersection(train_diffs_clones)
-
-        with open(out_fname, "w") as file:
-            file.writelines(list(self._train_full_clones))
-
-        self._ids_to_drop = set(int(pair.split(",")[1]) for pair in self._train_full_clones)
-        self.logger.info(f"Got {len(self._ids_to_drop)} clones ids to drop")
+        # keep only 1 example from each full clone group
+        for group in full_clones:
+            self._ids_to_drop.update([ex[1] for ex in group[1:]])
 
     def prepare(
         self,
         in_fname: str,
-        in_path: str,
-        parts: List[str],
         msg_clones_fname: str,
         diff_clones_fname: str,
-        deduplication_dir: str,
         is_ready: Optional[bool] = False,
         **kwargs,
     ) -> None:
-        """Prepares a set of ids of fully identical entries between train and validation/test.
-
-        During this process, metadata is extracted from input dataset and added to clones ids.
+        """Prepares a set of clones ids.
 
         Args:
             in_fname: Path to specific input file.
-            in_path: Path to root folder with input data.
-            parts: List of all parts in input dataset.
             msg_clones_fname: Path to file with clones in terms of messages.
             diff_clones_fname: Path to file with clones in terms of diffs.
-            deduplication_dir: Path to folder where files with found clones are stored.
             is_ready: A flag to indicate cases when clones ids are already built. When it is set to True,
                 this method doesn't do anything.
         """
         if is_ready:
+            self.logger.info(f"Got {len(self._ids_to_drop)} ids to drop")
             return
 
-        self._extract_metadata(in_path, deduplication_dir, parts)
-
-        self._add_metadata(
-            in_fname=os.path.join(deduplication_dir, msg_clones_fname),
-            out_fname=os.path.join(deduplication_dir, f"{msg_clones_fname.split('.')[0]}_metadata.txt"),
-            deduplication_dir=deduplication_dir,
-        )
-
-        self._add_metadata(
-            in_fname=os.path.join(deduplication_dir, diff_clones_fname),
-            out_fname=os.path.join(deduplication_dir, f"{diff_clones_fname.split('.')[0]}_metadata.txt"),
-            deduplication_dir=deduplication_dir,
-        )
-
-        self._get_full_clones(
-            msg_clones_fname=os.path.join(deduplication_dir, f"{msg_clones_fname.split('.')[0]}_metadata.txt"),
-            diff_clones_fname=os.path.join(deduplication_dir, f"{diff_clones_fname.split('.')[0]}_metadata.txt"),
-            out_fname=os.path.join(deduplication_dir, "full_clones_metadata.txt"),
-        )
+        self._get_inner_ids_to_drop(msg_clones_fname=msg_clones_fname, diff_clones_fname=diff_clones_fname)
+        self._get_outer_ids_to_drop(msg_clones_fname=msg_clones_fname, diff_clones_fname=diff_clones_fname)
+        self.logger.info(f"Got {len(self._ids_to_drop)} ids to drop")
 
     def process(self, chunk: pd.DataFrame, **kwargs) -> pd.DataFrame:
         return chunk.loc[~chunk["id"].isin(self._ids_to_drop)]
