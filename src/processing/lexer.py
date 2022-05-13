@@ -17,14 +17,13 @@ from ..utils import BaseProcessor
 class Lexer(BaseProcessor):
     """This class is used to lex diffs when it is possible.
 
-    It calculates percentiles on literals' lengths and drops too long literals.
+    It calculates percentiles on literals' lengths and drops very long literals.
 
     It also saves lexed data in a format required for pre-tokenization stage:
-    lexemes are separated by chosen character.
+    lexemes are separated by additional space characters.
 
     Args:
         upper_percentile: Percentile to use as an upper bound (should be in (0, 1) range).
-        sep_char: Character delimiter for separating lexemes.
         data_format: In which format mined data is saved.
         chunksize: Number of examples to process at once (data is read in chunks). Optional, default value is 1000.
         n_workers: Maximum number of concurrently running jobs. Optional, default value is 1 (sequential execution).
@@ -34,7 +33,6 @@ class Lexer(BaseProcessor):
     def __init__(
         self,
         upper_percentile: float,
-        sep_char: str,
         data_format: str,
         chunksize: Optional[int] = None,
         n_workers: Optional[int] = None,
@@ -42,10 +40,6 @@ class Lexer(BaseProcessor):
     ):
         super().__init__(chunksize=chunksize, n_workers=n_workers, data_format=data_format, logger_name=logger_name)
 
-        if len(sep_char) > 1:
-            raise ValueError("Delimiter should be a single character.")
-
-        self._sep = sep_char
         self._upper_percentile = upper_percentile
         self._percentiles: Dict[float, float] = {}
 
@@ -53,11 +47,23 @@ class Lexer(BaseProcessor):
         # (note: they all contain some gsql, might be related to https://github.com/pygments/pygments/pull/2006)
         self._examples_to_skip = [1731725, 1731749, 1731755, 1731759, 1732004]
 
+    def _is_lexeme_allowed(self, lexeme: Tuple[_TokenType, str]) -> bool:
+        """Checks if current lexeme is allowed.
+        Lexeme is allowed in three cases:
+
+        * it is not a literal
+        * it is a docstring literal
+        * it is a literal shorter than `self._upper_percentile`
+        """
+        if lexeme[0] not in Literal or lexeme[0] == Literal.String.Doc:
+            return True
+        return len(lexeme[1]) <= self._percentiles[self._upper_percentile]
+
     def _lex_diff(self, id: int, fname: str, diff: str) -> Iterable[Tuple[_TokenType, str]]:
         """Finds appropriate lexer based on diff and filename and returns resulting lexemes.
 
-        In case pygments doesn't have appropriate lexer or decides to use TextLexer (which doesn't do anything),
-        tokens are simply split by spaces.
+        In case `pygments` doesn't have appropriate lexer or decides to use `TextLexer` (which doesn't do anything),
+        tokens are simply split by whitespaces.
         """
         try:
             lexer = guess_lexer_for_filename(fname, diff)
@@ -96,14 +102,7 @@ class Lexer(BaseProcessor):
             mod_tokenized = self._lex_diff(cur_id, fname, mod["diff"])
             tokens.extend((token.strip() for token in file_diff.split()))
             # drop literals with lengths more than upper percentile
-            tokens.extend(
-                (
-                    lexeme[1]
-                    for lexeme in mod_tokenized
-                    if lexeme[0] not in Literal
-                    or (lexeme[0] in Literal and len(lexeme[1]) > self._percentiles[self._upper_percentile])
-                )
-            )
+            tokens.extend((lexeme[1] for lexeme in mod_tokenized if self._is_lexeme_allowed(lexeme)))
 
         return tokens
 
@@ -123,7 +122,9 @@ class Lexer(BaseProcessor):
                 fname = mod["new_path"]
 
             mod_tokenized = self._lex_diff(cur_id, fname, mod["diff"])
-            literals_len.extend([len(lexeme[1]) for lexeme in mod_tokenized if lexeme[0] in Literal])
+            literals_len.extend(
+                [len(lexeme[1]) for lexeme in mod_tokenized if lexeme[0] in Literal and lexeme[0] != Literal.String.Doc]
+            )
 
         return literals_len
 
@@ -194,20 +195,17 @@ class Lexer(BaseProcessor):
             )
 
         chunk["diff_tok"] = ["".join(diff) for diff in tokenized_diffs]
-        chunk["diff_sep"] = [
-            self._sep.join(token.strip() for token in diff if token.strip()) for diff in tokenized_diffs
-        ]
+        chunk["diff_sep"] = [" ".join(diff) for diff in tokenized_diffs]
         return chunk
 
     def __call__(self, in_fname: str, out_fname: str, delimiter_out_fname: str, **kwargs) -> None:
-        """
-        Iterates over input data in chunks, lexes it and saves results to separate file.
+        """Iterates over input data in chunks, lexes it and saves results to separate file.
 
         In this particular case, there are two versions of output files:
 
         * data without long literals
             (this version can be tokenized with other tokenizers)
-        * data without long literals + all tokens are separated with special delimiter
+        * data without long literals + all tokens are separated with additional spaces
             (this version can be tokenized with our custom tokenizer)
 
         Args:

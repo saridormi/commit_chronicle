@@ -1,18 +1,14 @@
 data_format: jsonl
-n_train_examples: 200000
 
 diff_extractor:
-  chunksize: 1000
-  n_workers: 8
+  chunksize: 32000
+  upper_percentile: 0.9
+  n_workers: 16
 
 tokenizer:
   _target_: tokenizers.models.BPE
   dropout: 0.5
   unk_token: '[UNK]'
-
-pre_tokenizer:
-  _target_: tokenizers.pre_tokenizers.CharDelimiterSplit
-  delimiter: 月
 
 trainer:
   _convert_: all

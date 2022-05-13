@@ -16,7 +16,6 @@ diff_processor:
 
 lexer:
   upper_percentile: 0.95
-  sep_char: 月
   chunksize: 32000
   n_workers: 16
 

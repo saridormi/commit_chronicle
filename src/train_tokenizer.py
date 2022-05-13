@@ -5,7 +5,7 @@ import hydra
 from hydra.utils import instantiate, to_absolute_path
 from omegaconf import DictConfig
 from tokenizers import Tokenizer
-from tokenizers.pre_tokenizers import Sequence, WhitespaceSplit
+from tokenizers.pre_tokenizers import ByteLevel
 from tokenizers.processors import TemplateProcessing
 
 from .tokenization import DiffExtractor
@@ -37,16 +37,12 @@ def main(cfg: DictConfig) -> None:
     # -----------------------------
 
     tokenizer = Tokenizer(instantiate(cfg.tokenizer))
-    tokenizer.pre_tokenizer = Sequence([instantiate(cfg.pre_tokenizer), WhitespaceSplit()])
+    tokenizer.pre_tokenizer = ByteLevel()
     tokenizer.post_processor = TemplateProcessing(
         single="[CLS] $A [SEP]",
         pair="[CLS] $A [SEP] $B:1 [SEP]:1",
-        special_tokens=[
-            ("[CLS]", 1),
-            ("[SEP]", 2),
-        ],
+        special_tokens=[("[CLS]", 1), ("[SEP]", 2)],
     )
-
     trainer = instantiate(cfg.trainer)
     tokenizer.train(trainer, [os.path.join(cfg.paths.tokenizer_dir, "diffs.txt")])
 
