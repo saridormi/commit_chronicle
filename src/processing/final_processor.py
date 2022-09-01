@@ -61,8 +61,6 @@ class FinalProcessor(BaseProcessor):
         self._get_licenses(license_in_fname=license_in_fname)
 
     def process(self, chunk: pd.DataFrame, **kwargs) -> pd.DataFrame:
-        chunk = chunk.drop(columns="mods")
-        chunk = chunk.loc[chunk["diff"].str.len() > 0]
         chunk["author"] = [self._authors_map[tuple(author)] for author in chunk["author"].tolist()]
         chunk["license"] = [self._repo_license_map[repo] for repo in chunk["repo"].tolist()]
         return chunk

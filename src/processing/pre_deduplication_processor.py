@@ -51,7 +51,7 @@ class PreDeduplicationProcessor(BaseProcessor):
         """Splits given string by punctuation and whitespaces."""
         return [y.strip() for y in re.split(self._separators, x) if y]
 
-    def _process_single_example(self, cur_id: int, cur_example: Union[str, List[Dict[str, str]]], data_col: str) -> str:
+    def _process_single_example(self, cur_id: int, cur_example: Union[str, List[Dict[str, str]]]) -> str:
         """Converts a single example into format required by SourcererCC.
 
         It includes the following steps:
@@ -61,19 +61,12 @@ class PreDeduplicationProcessor(BaseProcessor):
         * Obtain required spring representation:
             'project_id,sample_id,total_n_tokens,unique_n_tokens,token_hash@#@token1@@::@@frequency,...'
         """
-        if not isinstance(cur_id, int):
-            try:
-                cur_id = int(cur_id)
-            except ValueError:
-                self.logger.error(f"`id` is expected to be `int`, got {cur_id} of `{type(cur_id)} instead")
-                return ""
-
-        # diff preprocessing
-        if data_col != "message":
-            processed_example = self._preprocess_mods(cur_id, cur_example)
         # message preprocessing
-        else:
+        if isinstance(cur_example, str):
             processed_example = self._preprocess_msg(cur_id, cur_example)
+        # diff preprocessing
+        else:
+            processed_example = self._preprocess_mods(cur_id, cur_example)
 
         c = Counter(self._split_by_several_separators(processed_example))
         tokens_enc = (
@@ -83,30 +76,30 @@ class PreDeduplicationProcessor(BaseProcessor):
         unique_n_tokens = len(c)
         return f"{self._project_id},{cur_id},{total_n_tokens},{unique_n_tokens},{tokens_enc}\n"
 
-    def _preprocess_mods(self, cur_id: int, cur_example: List[Dict[str, str]]) -> str:
+    def _preprocess_mods(self, cur_id: int, cur_mods: List[Dict[str, str]]) -> str:
         """Preprocesses modifications from single commit, which currently includes the following:
 
         * unite modifications into single diff string
         * remove '@@ xxx yyy @@' git stuff via regular expression
         """
         try:
-            processed_example = self._get_diff_from_mods(cur_example)
+            processed_example = self._get_diff_from_mods(cur_mods)
             processed_example = re.sub("@@.*?@@\n", "", processed_example)
         except TypeError as e:
             self.logger.error(f"[diff] {cur_id} produced TypeError {e}")
-            processed_example = str(cur_example)
+            processed_example = str(cur_mods)
         return processed_example
 
-    def _preprocess_msg(self, cur_id: int, cur_example: str) -> str:
+    def _preprocess_msg(self, cur_id: int, cur_message: str) -> str:
         """Preprocesses a single commit message, which currently includes the following:
 
         * cast to lowercase
         """
         try:
-            processed_example = cur_example.lower()
+            processed_example = cur_message.lower()
         except AttributeError as e:
             self.logger.error(f"[message] {cur_id} produced AttributeError {e}")
-            processed_example = str(cur_example)
+            processed_example = str(cur_message)
         return processed_example
 
     def process(self, chunk: pd.DataFrame, data_col: str, **kwargs) -> List[str]:
@@ -118,7 +111,7 @@ class PreDeduplicationProcessor(BaseProcessor):
         """
         with Parallel(self._n_workers) as pool:
             res = pool(
-                delayed(self._process_single_example)(cur_id=item["id"], cur_example=item[data_col], data_col=data_col)
+                delayed(self._process_single_example)(cur_id=item["id"], cur_example=item[data_col])
                 for _, item in chunk[["id", data_col]].iterrows()
             )
         return res

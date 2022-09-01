@@ -103,7 +103,7 @@ class BaseProcessor:
     ):
         self._chunksize = chunksize if chunksize else 1000
         self._n_workers = n_workers if n_workers else 1
-        self.logger = BaseProcessor._get_logger(logger_name)
+        self._logger_name = logger_name
         self.data_format = data_format
 
         if data_format == "jsonl":
@@ -111,17 +111,17 @@ class BaseProcessor:
         else:
             raise NotImplementedError("Current data format is not supported")
 
-    @staticmethod
-    def _get_logger(name):
+    @property
+    def logger(self):
         """
         Workaround for logging with joblib (based on https://github.com/joblib/joblib/issues/1017)
         """
-        logger = logging.getLogger(name)
+        logger = logging.getLogger(self._logger_name)
         if len(logger.handlers) == 0:
             logger.setLevel(logging.INFO)
             sh = logging.StreamHandler()
             sh.setFormatter(logging.Formatter("%(asctime)s %(levelname)-8s %(message)s"))
-            fh = logging.FileHandler(f"{name}.log", mode="a")
+            fh = logging.FileHandler(f"{self._logger_name}.log", mode="a")
             fh.setFormatter(logging.Formatter("%(asctime)s %(levelname)-8s %(message)s"))
             logger.addHandler(sh)
             logger.addHandler(fh)

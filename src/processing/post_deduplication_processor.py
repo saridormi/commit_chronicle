@@ -59,7 +59,7 @@ class PostDeduplicationProcessor(BaseProcessor):
         inner_df["ex1"] = list(zip(inner_df.part_id1, inner_df.id1))
         inner_df["ex2"] = list(zip(inner_df.part_id2, inner_df.id2))
         inner_df = inner_df.groupby("ex1").agg(ex2=("ex2", set)).sort_index(ascending=False)
-        new_clones = {}
+        new_clones: Dict[Tuple[int, int], Set[Tuple[int, int]]] = {}
         for x, x_clones in tqdm(inner_df["ex2"].iteritems(), total=inner_df.shape[0], desc=f"Processing inner clones"):
             x_clones.add(x)
             if any(x in new_clones[key] for key in new_clones):
@@ -88,7 +88,7 @@ class PostDeduplicationProcessor(BaseProcessor):
             self._ids_to_drop.update([ex[1] for ex in group["ex1"]])
 
     def _get_inner_ids_to_drop(self, msg_clones_fname: str, diff_clones_fname: str):
-        """
+        """Aggregates ids of duplicated examples inside specific dataset part (e.g. train).
 
         Args:
             msg_clones_fname: Path to file with clones in terms of messages.

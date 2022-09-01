@@ -7,8 +7,8 @@ outliers_processor:
   upper_percentile: 0.95
 
 message_processor:
-  chunksize: 1000
-  n_workers: 8
+  chunksize: 16000
+  n_workers: 16
 
 diff_processor:
   chunksize: 16000

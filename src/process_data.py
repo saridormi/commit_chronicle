@@ -27,7 +27,9 @@ def main(cfg: DictConfig) -> None:
         [
             part.split(".")[0]
             for part in os.listdir(cfg.paths.input_dir)
-            if not os.path.isdir(os.path.join(cfg.paths.input_dir, part)) and "train" not in part
+            if not os.path.isdir(os.path.join(cfg.paths.input_dir, part))
+            and "train" not in part
+            and "final" not in part
         ]
     )
 
@@ -70,11 +72,12 @@ def main(cfg: DictConfig) -> None:
                 part,
             ),
             out_fname=os.path.join(cfg.paths.input_dir, "filtered_msgs", part),
+            line_sep=cfg.line_sep,
         )
 
-    # -----------------------------------
-    # -           filter diffs          -
-    # -----------------------------------
+    # ---------------------------------------
+    # - filter diffs – drop unchanged lines -
+    # ---------------------------------------
 
     os.makedirs(os.path.join(cfg.paths.input_dir, "filtered_diffs"), exist_ok=True)
     for part in parts:
@@ -84,9 +87,9 @@ def main(cfg: DictConfig) -> None:
             out_fname=os.path.join(cfg.paths.input_dir, "filtered_diffs", part),
         )
 
-    # -----------------------------------
-    # -            lex diffs            -
-    # -----------------------------------
+    # ------------------------
+    # - filter diffs – lexer -
+    # ------------------------
 
     os.makedirs(os.path.join(cfg.paths.input_dir, "lexed"), exist_ok=True)
     os.makedirs(os.path.join(cfg.paths.input_dir, "tokenization"), exist_ok=True)
