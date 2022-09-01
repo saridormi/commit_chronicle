@@ -1,13 +1,24 @@
+import copy
 import json
 import os
-from typing import Dict, Iterable, List, Optional, Tuple
+import re
+from typing import Dict, Iterable, List, Optional, Tuple, Union
 
 import numpy as np
 import pandas as pd
 from joblib import Parallel, delayed
 from pygments import lex
 from pygments.lexers import TextLexer, guess_lexer_for_filename
-from pygments.token import Literal, Text, _TokenType
+from pygments.token import (
+    Comment,
+    Error,
+    Keyword,
+    Literal,
+    Operator,
+    Punctuation,
+    Whitespace,
+    _TokenType,
+)
 from pygments.util import ClassNotFound
 from tqdm import tqdm
 
@@ -17,7 +28,7 @@ from ..utils import BaseProcessor
 class Lexer(BaseProcessor):
     """This class is used to lex diffs when it is possible.
 
-    It calculates percentiles on literals' lengths and drops very long literals.
+    It calculates percentiles on tokens' lengths and drops very long tokens.
 
     It also saves lexed data in a format required for pre-tokenization stage:
     lexemes are separated by additional space characters.
@@ -33,6 +44,7 @@ class Lexer(BaseProcessor):
     def __init__(
         self,
         upper_percentile: float,
+        line_sep: str,
         data_format: str,
         chunksize: Optional[int] = None,
         n_workers: Optional[int] = None,
@@ -41,6 +53,7 @@ class Lexer(BaseProcessor):
         super().__init__(chunksize=chunksize, n_workers=n_workers, data_format=data_format, logger_name=logger_name)
 
         self._upper_percentile = upper_percentile
+        self._line_sep = line_sep
         self._percentiles: Dict[float, float] = {}
 
         # TODO: these examples make pygments hang ;( currently they are manually skipped
@@ -49,14 +62,14 @@ class Lexer(BaseProcessor):
 
     def _is_lexeme_allowed(self, lexeme: Tuple[_TokenType, str]) -> bool:
         """Checks if current lexeme is allowed.
-        Lexeme is allowed in three cases:
-
-        * it is not a literal
+        Lexeme is allowed if:
         * it is a docstring literal
-        * it is a literal shorter than `self._upper_percentile`
+        * it is a comment
+        * it is shorter than `self._upper_percentile`
         """
-        if lexeme[0] not in Literal or lexeme[0] == Literal.String.Doc:
+        if lexeme[0] == Literal.String.Doc or lexeme[0] in Comment:
             return True
+
         return len(lexeme[1]) <= self._percentiles[self._upper_percentile]
 
     def _lex_diff(self, id: int, fname: str, diff: str) -> Iterable[Tuple[_TokenType, str]]:
@@ -70,41 +83,35 @@ class Lexer(BaseProcessor):
             if not isinstance(lexer, TextLexer):
                 yield from lex(diff, lexer)
             else:
-                self.logger.warning(f"TextLexer chosen for `{fname}` (id: {id})")
-                yield from ((Text, token) for token in diff.split())
+                yield from ((Error.DefaultLexer, token) for token in diff.split())
         except ClassNotFound:
             self.logger.warning(f"No lexer found for `{fname}` (id: {id})")
-            yield from ((Text, token) for token in diff.split())
+            yield from ((Error.DefaultLexer, token) for token in diff.split())
 
-    def _lex_commit_mods(self, cur_id: int, cur_mods: List[Dict[str, str]]) -> List[str]:
+    def _lex_commit_mods(self, cur_id: int, cur_mods: List[Dict[str, str]]) -> List[Dict[str, Union[str, List[str]]]]:
         """Iterates over all modifications in current commit and tokenizes each of them."""
-        tokens: List[str] = []
 
         for mod in cur_mods:
             if mod["change_type"] == "UNKNOWN":
                 continue
-            if mod["change_type"] == "ADD":
-                file_diff = f"new file {mod['new_path']}\n"
-                fname = mod["new_path"]
-            elif mod["change_type"] == "DELETE":
-                file_diff = f"deleted file {mod['old_path']}\n"
+            if mod["change_type"] == "DELETE":
                 fname = mod["old_path"]
-            elif mod["change_type"] == "RENAME":
-                file_diff = f"rename from {mod['old_path']}\nrename to {mod['new_path']}\n"
-                fname = mod["new_path"]
-            elif mod["change_type"] == "COPY":
-                file_diff = f"copy from {mod['old_path']}\ncopy to {mod['new_path']}\n"
-                fname = mod["new_path"]
             else:
-                file_diff = f"{mod['new_path']}\n"
                 fname = mod["new_path"]
 
-            mod_tokenized = self._lex_diff(cur_id, fname, mod["diff"])
-            tokens.extend((token.strip() for token in file_diff.split()))
             # drop literals with lengths more than upper percentile
-            tokens.extend((lexeme[1] for lexeme in mod_tokenized if self._is_lexeme_allowed(lexeme)))
+            diff = [
+                lexeme[1] if self._is_lexeme_allowed(lexeme) else "[LONG]"
+                for lexeme in self._lex_diff(cur_id, fname, mod["diff"])
+            ]
 
-        return tokens
+            if len(diff) == 1 and diff[0].strip() == "[LONG]":
+                self.logger.error(f"Whole diff as a single token! id: {cur_id}, fname: {fname}")
+                diff = [lexeme[1] for lexeme in self._lex_diff(cur_id, fname, mod["diff"])]
+
+            mod["diff"] = diff
+
+        return cur_mods
 
     def _get_literals_len_mods(self, cur_id: int, cur_mods: List[Dict[str, str]]) -> List[int]:
         """Iterates over all modifications in current commit,
@@ -122,8 +129,18 @@ class Lexer(BaseProcessor):
                 fname = mod["new_path"]
 
             mod_tokenized = self._lex_diff(cur_id, fname, mod["diff"])
+
             literals_len.extend(
-                [len(lexeme[1]) for lexeme in mod_tokenized if lexeme[0] in Literal and lexeme[0] != Literal.String.Doc]
+                [
+                    len(lexeme[1])
+                    for lexeme in mod_tokenized
+                    if lexeme[0] != Error.DefaultLexer
+                    and lexeme[0] not in Punctuation
+                    and lexeme[0] not in Operator
+                    and lexeme[0] not in Whitespace
+                    and lexeme[0] not in Keyword
+                    and len(lexeme[1]) > 1
+                ]
             )
 
         return literals_len
@@ -163,7 +180,7 @@ class Lexer(BaseProcessor):
         with open(os.path.join(literals_len_dir, "literals_len.txt"), "r") as file:
             literals_lens = [int(line.strip()) for line in file]
 
-        for q in [0.01, 0.05, 0.9, 0.95, 0.99]:
+        for q in [0.01, 0.05, 0.1, 0.25, 0.5, 0.75, 0.9, 0.95, 0.99]:
             self._percentiles[q] = np.quantile(literals_lens, q)
 
         with open(os.path.join(literals_len_dir, "literals.json"), "w") as file:
@@ -189,13 +206,25 @@ class Lexer(BaseProcessor):
 
     def process(self, chunk: pd.DataFrame, **kwargs) -> pd.DataFrame:
         with Parallel(self._n_workers) as pool:
-            tokenized_diffs = pool(
+            mods = pool(
                 delayed(self._lex_commit_mods)(cur_id=item["id"], cur_mods=item["mods"])
                 for _, item in chunk[["id", "mods"]].iterrows()
             )
 
-        chunk["diff_tok"] = ["".join(diff) for diff in tokenized_diffs]
-        chunk["diff_sep"] = [" ".join(diff) for diff in tokenized_diffs]
+        mods_sep = copy.deepcopy(mods)
+        for i, example in enumerate(mods_sep):
+            for j, mod_sep in enumerate(example):
+                diff = self._line_sep.join(
+                    [re.sub(" +", " ", line.strip()) for line in " ".join(mod_sep["diff"]).split("\n")]
+                )
+                mods_sep[i][j]["diff"] = diff
+        chunk["mods_sep"] = mods_sep
+
+        for i, example in enumerate(mods):
+            for j, mod in enumerate(example):
+                mods[i][j]["diff"] = "".join(mod["diff"]).replace("\n", self._line_sep)
+        chunk["mods"] = mods
+
         return chunk
 
     def __call__(self, in_fname: str, out_fname: str, delimiter_out_fname: str, **kwargs) -> None:
@@ -228,11 +257,8 @@ class Lexer(BaseProcessor):
         reader = self._read_input(in_fname)
         for chunk in tqdm(reader, leave=False):
             processed_chunk = self.process(chunk.loc[~chunk["id"].isin(self._examples_to_skip)], **process_kwargs)
+            self._append_to_outfile(processed_chunk.drop(columns=["mods_sep"]), out_fname)
             self._append_to_outfile(
-                processed_chunk.drop(columns=["diff_sep"]).rename(columns={"diff_tok": "diff"}), out_fname
+                processed_chunk.drop(columns=["mods"]).rename(columns={"mods_sep": "mods"}), delimiter_out_fname
             )
-            self._append_to_outfile(
-                processed_chunk.drop(columns=["diff_tok"]).rename(columns={"diff_sep": "diff"}), delimiter_out_fname
-            )
-
         self.logger.info(f"Finished processing {in_fname}")

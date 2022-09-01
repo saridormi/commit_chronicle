@@ -11,12 +11,12 @@ message_processor:
   n_workers: 8
 
 diff_processor:
-  chunksize: 2000
+  chunksize: 16000
   n_workers: 16
 
 lexer:
-  upper_percentile: 0.95
-  chunksize: 32000
+  upper_percentile: 0.99
+  chunksize: 16000
   n_workers: 16
 
 pre_deduplication_processor:
@@ -29,6 +29,8 @@ post_deduplication_processor:
 
 final_processor:
   chunksize: 1000
+
+line_sep: "[NL]"
 
 paths:
   input_dir: extracted_data_jsonl

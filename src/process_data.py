@@ -90,7 +90,7 @@ def main(cfg: DictConfig) -> None:
 
     os.makedirs(os.path.join(cfg.paths.input_dir, "lexed"), exist_ok=True)
     os.makedirs(os.path.join(cfg.paths.input_dir, "tokenization"), exist_ok=True)
-    lexer = Lexer(**cfg.lexer, data_format=cfg.data_format, logger_name="lexer")
+    lexer = Lexer(**cfg.lexer, data_format=cfg.data_format, logger_name="lexer", line_sep=cfg.line_sep)
     for part in parts:
         os.makedirs(os.path.join(cfg.paths.literals_percentile_dir, part), exist_ok=True)
 
@@ -113,6 +113,7 @@ def main(cfg: DictConfig) -> None:
 
     os.makedirs(os.path.join(cfg.paths.deduplication_dir, "raw"), exist_ok=True)
     for part_id, part in enumerate(parts):
+
         processor = PreDeduplicationProcessor(
             **cfg.pre_deduplication_processor,
             project_id=part_id + 1,

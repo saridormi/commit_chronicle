@@ -1,4 +1,4 @@
-from typing import Dict, Optional
+from typing import Dict, List, Optional
 
 import numpy as np
 import pandas as pd
@@ -32,34 +32,35 @@ class DiffExtractor(BaseProcessor):
         self._upper_percentile = upper_percentile
         self._percentiles: Dict[float, float] = {}
 
-    def prepare(self, in_fname: str, **kwargs) -> None:
+    def prepare(self, in_fname: str, line_sep: str, **kwargs) -> None:
         """Calculates percentiles on diff lengths."""
         diff_lens = []
         reader = self._read_input(in_fname)
         for chunk in tqdm(reader, leave=False, desc=f"Iterating over {in_fname} to compute diff lens percentiles"):
-            diff_lens.extend([len(diff) for diff in chunk["diff"].tolist()])
+            diff_lens.extend([len(line_sep.join([mod["diff"] for mod in commit])) for commit in chunk["mods"].tolist()])
         for q in [0.01, 0.05, 0.9, 0.95, 0.99]:
             self._percentiles[q] = np.quantile(diff_lens, q)
         self.logger.info(f"{self._percentiles}")
 
-    def process(self, chunk: pd.DataFrame, **kwargs) -> pd.DataFrame:
+    def process(self, chunk: pd.DataFrame, line_sep: str, **kwargs) -> List[str]:
+        chunk["diff"] = [line_sep.join([mod["diff"] for mod in commit]) + "\n" for commit in chunk["mods"].tolist()]
         chunk["diff_len"] = [len(diff) for diff in chunk["diff"].tolist()]
         chunk = chunk.loc[chunk["diff_len"] <= self._percentiles[self._upper_percentile]]
         return chunk["diff"].tolist()
 
-    def extract_diffs(self, in_fname: str, out_fname: str, n_examples: Optional[int] = None) -> None:
+    def extract_diffs(self, in_fname: str, out_fname: str, line_sep: str, n_examples: Optional[int] = None) -> None:
         """Extracts first `n_examples` diffs from input file and saves them to separate file.
         If `n_examples` is not given, extracts all diffs from input file.
         """
         self.logger.info(f"Starting processing {in_fname}")
 
         self._prepare_outfile(out_fname, add_data_format=False)
-        self.prepare(in_fname)
+        self.prepare(in_fname, line_sep)
 
         if not n_examples:
             reader = self._read_input(in_fname)
             for chunk in tqdm(reader, leave=False):
-                processed_chunk = self.process(chunk)
+                processed_chunk = self.process(chunk, line_sep)
                 self._append_to_outfile(processed_chunk, out_fname)
         else:
             reader = self._read_input(in_fname)
@@ -69,7 +70,7 @@ class DiffExtractor(BaseProcessor):
                 if n_processed_examples + len(chunk) > n_examples:
                     chunk = chunk[: n_examples - n_processed_examples]
 
-                processed_chunk = self.process(chunk)
+                processed_chunk = self.process(chunk, line_sep)
                 self._append_to_outfile(processed_chunk, out_fname)
 
                 n_processed_examples += len(chunk)
