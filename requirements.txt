@@ -14,7 +14,6 @@ transformers~=4.21.1
 tqdm==4.62.1
 hydra-core==1.1.1
 jsonlines~=3.0.0
-sklearn~=1.1.2
 
 # code quality
 black~=22.6.0
