@@ -1,9 +1,11 @@
-from typing import Dict, List, Optional, Set, Tuple
+from collections import defaultdict
+from typing import Dict, List, Optional, Sequence, Set, Tuple
 
 import pandas as pd
+from joblib import Parallel, delayed
 from tqdm import tqdm
 
-from ..utils import BaseProcessor
+from ..utils import BaseProcessor, CloneGroup
 
 
 class PostDeduplicationProcessor(BaseProcessor):
@@ -24,117 +26,310 @@ class PostDeduplicationProcessor(BaseProcessor):
         logger_name: Optional[str] = None,
     ):
         super().__init__(chunksize=chunksize, n_workers=n_workers, data_format=data_format, logger_name=logger_name)
-        self._ids_to_drop: Set[int] = set()
+        self._inner_clones_to_drop: Set[int] = set()
+        self._outer_clones_to_drop: Set[int] = set()
 
-    def _get_outer_clones(self, clones_fname: str) -> List[Dict[str, List]]:
-        """Processes clones coming from different dataset parts.
+    def _get_outer_clones(
+        self, clones_fname: str, inner_part_id: int, outer_part_ids: Sequence[int]
+    ) -> List[CloneGroup]:
+        """Processes clones between different dataset parts. One of parts is "inner", and the other parts are "outer".
+        Later, we want to drop clones only from "inner" part.
 
-        Args:
-            clones_fname: Part to file to read clones from.
-
-        Returns:
-            A list where each clone group is represented as dictionary with `ex1` and `ex2` keys. `ex2` is an
-             example from val/test part and `ex1` is a set of its clones from train.
-        """
-        clones_df = pd.read_csv(clones_fname, header=None, names=["part_id1", "id1", "part_id2", "id2"])
-        outer_df = clones_df.loc[(clones_df["part_id1"] == 1) & (clones_df["part_id2"].isin([2, 4]))].copy()
-        outer_df["ex1"] = list(zip(outer_df.part_id1, outer_df.id1))
-        outer_df["ex2"] = list(zip(outer_df.part_id2, outer_df.id2))
-        outer_df = outer_df.groupby("ex2").agg(ex1=("ex1", list)).reset_index()
-        return outer_df[["ex1", "ex2"]].to_dict(orient="records")
-
-    def _get_inner_clones(self, clones_fname: str, part_id: Optional[int] = 1) -> List[Set[Tuple[int, int]]]:
-        """Processes clones coming from the same dataset part.
+        The primary use-case of this method is to find clones between train and val/test – we want to drop them
+        from train.
 
         Args:
             clones_fname: Part to file to read clones from.
-            part_id: Which dataset part to process (default value is 1, corresponding to train).
+            inner_part_id: "Inner" dataset part: we intend to drop clones from this part.
+            outer_part_ids: Sequence of "outer" dataset parts: we do not intend to drop clones from these parts.
 
         Returns:
-            A list where each clone group is represented as set of (part_id, id) tuples. Clone groups are disjoint,
-             each example appears only in one clone group.
+            A list of CloneGroup. In this case, clone groups are divided into a root and clones,
+              where root is the "outer" example and clones are its "inner" clones.
         """
         clones_df = pd.read_csv(clones_fname, header=None, names=["part_id1", "id1", "part_id2", "id2"])
+
+        # limit to inner/outer pairs (or outer/inner, they are also present!)
+        outer_df = clones_df.loc[
+            (clones_df["part_id1"] == inner_part_id) & (clones_df["part_id2"].isin(outer_part_ids))
+            | ((clones_df["part_id1"].isin(outer_part_ids)) & (clones_df["part_id2"] == inner_part_id))
+        ].copy()
+
+        # make sure that inner part is always id1
+        def swap_ids(row):
+            if row["part_id1"] != inner_part_id:
+                row["part_id1"], row["part_id2"] = row["part_id2"], row["part_id1"]
+                row["id1"], row["id2"] = row["id2"], row["id1"]
+            return row
+
+        outer_df = outer_df.apply(swap_ids, axis=1)
+        outer_df["inner_example"] = list(zip(outer_df.part_id1, outer_df.id1))
+        outer_df["outer_example"] = list(zip(outer_df.part_id2, outer_df.id2))
+        outer_df = outer_df.groupby("outer_example").agg(inner_examples=("inner_example", set)).reset_index()
+        return [
+            CloneGroup(clone_root=outer_ex, clones=inner_examples)
+            for inner_examples, outer_ex in zip(outer_df.inner_examples, outer_df.outer_example)
+        ]
+
+    def _get_inner_clones_identical(self, clones_fname: str, part_id: int) -> List[CloneGroup]:
+        """Processes clones coming from the same dataset part. This method is used only for 100% clones, and it relies
+        on the assumption that relation "being a clone" is transitive.
+
+        Args:
+            clones_fname: Part to file to read clones from.
+            part_id: Which dataset part to process.
+
+        Returns:
+            A list of CloneGroup. In this case, clone groups do not have a root, because being a 100% clone is an
+              equivalence relation and these groups are basically equivalence classes. Also, clone groups are disjoint,
+              each example appears only in one clone group.
+        """
+        clones_df = pd.read_csv(clones_fname, header=None, names=["part_id1", "id1", "part_id2", "id2"])
+        # limit to inner pairs
         inner_df = clones_df.loc[(clones_df["part_id1"] == part_id) & (clones_df["part_id2"] == part_id)].copy()
         inner_df["ex1"] = list(zip(inner_df.part_id1, inner_df.id1))
         inner_df["ex2"] = list(zip(inner_df.part_id2, inner_df.id2))
+        # group by first elements of the pairs
+        # initially, for each ex1 it aggregates only clones with smaller ids
+        # so we loop over the pairs again and unite current set of clones with clones with bigger ids
         inner_df = inner_df.groupby("ex1").agg(ex2=("ex2", set)).sort_index(ascending=False)
         new_clones: Dict[Tuple[int, int], Set[Tuple[int, int]]] = {}
-        for x, x_clones in tqdm(inner_df["ex2"].iteritems(), total=inner_df.shape[0], desc=f"Processing inner clones"):
-            x_clones.add(x)
-            if any(x in new_clones[key] for key in new_clones):
-                continue
+        for x, x_clones in tqdm(inner_df["ex2"].iteritems(), total=inner_df.shape[0], desc="Processing inner clones"):
+            flag = False
+            for key in new_clones:
+                if x in new_clones[key]:
+                    if flag:
+                        raise ValueError(f"{x} is present in more than one clone group!")
+                    new_clones[key] |= x_clones
+                    flag = True
+            if not flag:
+                new_clones[x] = x_clones
+
+        for key in new_clones:
+            new_clones[key].add(key)
+
+        return [CloneGroup(clone_root=None, clones=new_clones[key]) for key in new_clones]
+
+    def _get_full_inner_clones_identical(
+        self, msg_clones: List[CloneGroup], diff_clones: List[CloneGroup]
+    ) -> List[CloneGroup]:
+        """Aggregates a list of full clones (both in terms of diffs and a messages). This method is used only
+        for 100% clones, and it relies on the assumption that relation "being a clone" is transitive.
+
+        Args:
+            msg_clones: A list of clones in terms of messages.
+            diff_clones: A list of clones in terms of diffs.
+
+        Returns:
+            A list of CloneGroup. In this case, clone groups do not have a root, because being a 100% clone is an
+              equivalence relation and these groups are basically equivalence classes. Also, clone groups are disjoint,
+              each example appears only in one clone group.
+        """
+        full_clones = []
+        for cur_msg_clones in tqdm(msg_clones, total=len(msg_clones), desc="Aggregating full inner clones"):
+            for cur_diff_clones in diff_clones:
+                cur_full_clones = cur_msg_clones.clones & cur_diff_clones.clones
+                if len(cur_full_clones) > 1:
+                    full_clones.append(CloneGroup(clone_root=None, clones=cur_full_clones))
+        return full_clones
+
+    def _get_inner_clones_similar(self, clones_fname: str, part_id: int) -> List[CloneGroup]:
+        """Processes clones coming from the same dataset part. This method is used for similar clones, and it doesn't
+        rely on the assumption that relation "being a clone" is transitive.
+
+        Args:
+            clones_fname: Part to file to read clones from.
+            part_id: Which dataset part to process.
+
+        Returns:
+            A list of CloneGroup. In this case, clone groups are divided into a root and clones, where clones are the
+             clones of this root. Also, clone groups are NOT disjoint.
+        """
+        clones_df = pd.read_csv(clones_fname, header=None, names=["part_id1", "id1", "part_id2", "id2"])
+
+        # limit to inner pairs
+        inner_df = clones_df.loc[(clones_df["part_id1"] == part_id) & (clones_df["part_id2"] == part_id)].copy()
+        inner_df["ex1"] = list(zip(inner_df.part_id1, inner_df.id1))
+        inner_df["ex2"] = list(zip(inner_df.part_id2, inner_df.id2))
+
+        d = inner_df.groupby("ex1").agg(clones_group=("ex2", set)).sort_index(ascending=True)
+        new_clones: Dict[Tuple[int, int], Set[Tuple[int, int]]] = {}
+        for x, x_clones in tqdm(
+            d["clones_group"].iteritems(), total=d.shape[0], desc="Processing inner clones (step 1)"
+        ):
+            for key in new_clones:
+                if key in x_clones:
+                    new_clones[key].add(x)
             new_clones[x] = x_clones
 
-        return [new_clones[key] for key in new_clones]
+        # if any example was only present as "ex2", its clone group won't appear, e.g: "1,3, 1,2\n1,5, 1,2"
+        d = inner_df.groupby("ex2").agg(clones_group=("ex1", set)).sort_index(ascending=True)
+        for x, x_clones in tqdm(
+            d["clones_group"].iteritems(), total=d.shape[0], desc="Processing inner clones (step 2)"
+        ):
+            if x not in new_clones:
+                new_clones[x] = x_clones
+        return [CloneGroup(clone_root=key, clones=new_clones[key]) for key in new_clones]
 
-    def _get_outer_ids_to_drop(self, msg_clones_fname: str, diff_clones_fname: str) -> None:
-        """Aggregates ids of train examples that are duplicate to val/test examples either in terms of messages or
-        in terms of diffs.
+    def _get_full_inner_clones_similar(
+        self, msg_clones: List[CloneGroup], diff_clones: List[CloneGroup]
+    ) -> List[CloneGroup]:
+        """Aggregates a list of full clones (both in terms of diffs and a messages). This method is used
+        for similar clones, and it doesn't rely on the assumption that relation "being a clone" is transitive.
+
+        Args:
+            msg_clones: A list of clones in terms of messages.
+            diff_clones: A list of clones in terms of diffs.
+
+        Returns:
+            A list of CloneGroup. In this case, clone groups are divided into a root and clones, where clones are the
+             clones of this root. Also, clone groups are NOT disjoint.
+        """
+
+        def get_full_clones(cur_msg_clones, cur_diff_clones):
+            if cur_diff_clones.clone_root == cur_msg_clones.clone_root:
+                cur_full_clones = cur_msg_clones.clones & cur_diff_clones.clones
+                if len(cur_full_clones) > 0:
+                    return CloneGroup(clone_root=cur_diff_clones.clone_root, clones=cur_full_clones)
+            return None
+
+        self.logger.info("Aggregating full clones")
+
+        with Parallel(self._n_workers) as pool:
+            full_clones = pool(
+                delayed(get_full_clones)(cur_msg_clones, cur_diff_clones)
+                for cur_msg_clones in msg_clones
+                for cur_diff_clones in diff_clones
+            )
+        return [g for g in full_clones if g]
+
+    def _get_outer_ids_to_drop(
+        self, msg_clones_fname: str, diff_clones_fname: str, inner_part_id: int, outer_part_ids: Sequence[int]
+    ) -> None:
+        """Aggregates ids of "inner" part (e.g. train) examples that are duplicate to "outer" parts (e.g. val/test) examples
+        either in terms of messages or in terms of diffs.
 
         Args:
             msg_clones_fname: Part to file to read message clones from.
             diff_clones_fname: Part to file to read diff clones from.
+            inner_part_id: "Inner" dataset part: we intend to drop clones from this part.
+            outer_part_ids: Sequence of "outer" dataset parts: we do not intend to drop clones from these parts.
         """
-        # get train clones by messages and by diffs
-        msg_clones = self._get_outer_clones(msg_clones_fname)
-        diff_clones = self._get_outer_clones(diff_clones_fname)
+        # get outer clones by messages and by diffs
+        msg_clones = self._get_outer_clones(
+            msg_clones_fname, inner_part_id=inner_part_id, outer_part_ids=outer_part_ids
+        )
+        diff_clones = self._get_outer_clones(
+            diff_clones_fname, inner_part_id=inner_part_id, outer_part_ids=outer_part_ids
+        )
 
-        # drop all message clones from train
+        # drop all message clones from inner part
         for group in msg_clones:
-            self._ids_to_drop.update([ex[1] for ex in group["ex1"]])
-        # drop all diffs clones from train
-        for group in diff_clones:
-            self._ids_to_drop.update([ex[1] for ex in group["ex1"]])
+            self._outer_clones_to_drop.update(group.get_ids_to_drop(include_root=False))
 
-    def _get_inner_ids_to_drop(self, msg_clones_fname: str, diff_clones_fname: str):
+        # drop all diffs clones from inner part
+        for group in diff_clones:
+            self._outer_clones_to_drop.update(group.get_ids_to_drop(include_root=False))
+
+    def _get_inner_ids_to_drop(
+        self,
+        msg_clones_fname: str,
+        diff_clones_fname: str,
+        inner_part_id: int,
+        only_full_inner_clones: bool,
+        identical_clones: bool,
+    ) -> None:
         """Aggregates ids of duplicated examples inside specific dataset part (e.g. train).
 
         Args:
             msg_clones_fname: Path to file with clones in terms of messages.
             diff_clones_fname: Path to file with clones in terms of diffs.
-            out_fname: Path to save resulting full clones.
+            inner_part_id: Current part id, should be the same as used in `PreDeduplicationProcessor` for this specific part.
+            only_full_inner_clones: True to drop only full clones, False to also drop partial clones
+                (clones only in terms of diffs or messages).
+            identical_clones: True to use logic for 100% clones and False to use logic for similar clones.
         """
-        # get train clones by messages and by diffs
-        msg_clones = self._get_inner_clones(msg_clones_fname, part_id=1)
-        diff_clones = self._get_inner_clones(diff_clones_fname, part_id=1)
+        # obtain inner clones
+        if identical_clones:
+            msg_clones = self._get_inner_clones_identical(msg_clones_fname, part_id=inner_part_id)
+            diff_clones = self._get_inner_clones_identical(diff_clones_fname, part_id=inner_part_id)
+            full_clones = self._get_full_inner_clones_identical(msg_clones=msg_clones, diff_clones=diff_clones)
+        else:
+            msg_clones = self._get_inner_clones_similar(msg_clones_fname, part_id=inner_part_id)
+            diff_clones = self._get_inner_clones_similar(diff_clones_fname, part_id=inner_part_id)
+            full_clones = self._get_full_inner_clones_similar(msg_clones=msg_clones, diff_clones=diff_clones)
 
-        # aggregate full train clones
-        full_clones = []
-        for cur_msg_clones in tqdm(msg_clones, total=len(msg_clones), desc="Processing full clones"):
-            for cur_diff_clones in diff_clones:
-                cur_full_clones = cur_msg_clones & cur_diff_clones
-                if len(cur_full_clones) > 1:
-                    full_clones.append(list(cur_full_clones))
+        if only_full_inner_clones:
+            for group in full_clones:
+                self._inner_clones_to_drop.update(group.get_ids_to_drop())
+        else:
+            for group in msg_clones:
+                self._inner_clones_to_drop.update(group.get_ids_to_drop())
 
-        # keep only 1 example from each full clone group
-        for group in full_clones:
-            self._ids_to_drop.update([ex[1] for ex in group[1:]])
+            for group in diff_clones:
+                self._inner_clones_to_drop.update(group.get_ids_to_drop())
 
-    def prepare(
+    def clones_report(self):
+        self.logger.info(f"Will drop {len(self._outer_clones_to_drop)} outer clones\n")
+        self.logger.info(f"Will drop {len(self._inner_clones_to_drop)} inner clones\n")
+
+    def prepare(  # type: ignore[override]
         self,
         in_fname: str,
+        inner_part_id: int,
+        outer_part_ids: Sequence[int],
         msg_clones_fname: str,
         diff_clones_fname: str,
-        is_ready: Optional[bool] = False,
+        process_inner_clones: bool,
+        process_outer_clones: bool,
+        only_full_inner_clones: bool,
+        identical_clones: bool,
+        is_ready: bool = False,
         **kwargs,
     ) -> None:
-        """Prepares a set of clones ids.
+        """Prepares a set of clones ids to drop.
+
+        Note:
+          For `inner_part_id` and `outer_part_ids` ids should be the same as
+          used in `PreDeduplicationProcessor` for each part.
 
         Args:
             in_fname: Path to specific input file.
+            inner_part_id: "Inner" part id.
+            outer_part_ids: A sequence of parts that will be considered as "outer" when searching for outer clones.
             msg_clones_fname: Path to file with clones in terms of messages.
             diff_clones_fname: Path to file with clones in terms of diffs.
-            is_ready: A flag to indicate cases when clones ids are already built. When it is set to True,
-                this method doesn't do anything.
+            process_inner_clones: True to process inner clones (clones inside given dataset part), False otherwise.
+            process_outer_clones: True to process outer clones (clones between given dataset parts), False otherwise.
+            only_full_inner_clones: True to drop only full clones, False to also drop partial clones
+                (clones only in terms of diffs or messages).
+            identical_clones: True to use logic for 100% clones and False to use logic for similar clones.
+            is_ready: A flag to indicate that clones ids are already built and are stored in `self._ids_to_drop`.
+                When it is set to True, this method doesn't do anything.
         """
         if is_ready:
-            self.logger.info(f"Got {len(self._ids_to_drop)} ids to drop")
+            self.clones_report()
             return
 
-        self._get_inner_ids_to_drop(msg_clones_fname=msg_clones_fname, diff_clones_fname=diff_clones_fname)
-        self._get_outer_ids_to_drop(msg_clones_fname=msg_clones_fname, diff_clones_fname=diff_clones_fname)
-        self.logger.info(f"Got {len(self._ids_to_drop)} ids to drop")
+        if process_inner_clones:
+            self._get_inner_ids_to_drop(
+                msg_clones_fname=msg_clones_fname,
+                diff_clones_fname=diff_clones_fname,
+                inner_part_id=inner_part_id,
+                only_full_inner_clones=only_full_inner_clones,
+                identical_clones=identical_clones,
+            )
+        if process_outer_clones:
+            self._get_outer_ids_to_drop(
+                msg_clones_fname=msg_clones_fname,
+                diff_clones_fname=diff_clones_fname,
+                inner_part_id=inner_part_id,
+                outer_part_ids=outer_part_ids,
+            )
+
+        self.clones_report()
 
     def process(self, chunk: pd.DataFrame, **kwargs) -> pd.DataFrame:
-        return chunk.loc[~chunk["id"].isin(self._ids_to_drop)]
+        chunk = chunk.loc[~chunk["id"].isin(self._outer_clones_to_drop)]
+        chunk = chunk.loc[~chunk["id"].isin(self._inner_clones_to_drop)]
+        return chunk

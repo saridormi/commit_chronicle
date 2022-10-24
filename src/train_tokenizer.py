@@ -5,8 +5,9 @@ import hydra
 from hydra.utils import instantiate, to_absolute_path
 from omegaconf import DictConfig
 from tokenizers import ByteLevelBPETokenizer, Tokenizer
-from tokenizers.pre_tokenizers import Sequence, WhitespaceSplit
 from transformers import PreTrainedTokenizerFast
+
+from src.processing import MessageProcessor
 
 from .tokenization import DiffExtractor
 
@@ -24,57 +25,52 @@ def main(cfg: DictConfig) -> None:
     # -  prepare training data    -
     # -----------------------------
     if "extract" not in cfg or cfg.extract:
-        n_examples = cfg.n_train_examples if "n_train_examples" in cfg else None
         extractor = DiffExtractor(**cfg.diff_extractor, data_format=cfg.data_format)
         extractor.extract_diffs(
-            in_fname=os.path.join(cfg.paths.input_dir, "tokenization", "train_final"),
+            in_fname=os.path.join(cfg.paths.input_dir, "train_final"),
             out_fname=os.path.join(cfg.paths.tokenizer_dir, "diffs.txt"),
-            n_examples=n_examples,
+            n_examples=cfg.diff_extractor.n_train_examples if "n_train_examples" in cfg.diff_extractor else None,
             line_sep=cfg.line_sep,
         )
 
     # -----------------------------
     # -      train tokenizer      -
     # -----------------------------
-    special_tokens = ["[PAD]", "[UNK]", "[BOS]", "[EOS]", "[MASK]", "[LONG]", "\n"] + [cfg.line_sep]
-    if cfg.tokenizer_configuration == "byte_level":
-        tokenizer = ByteLevelBPETokenizer(**cfg.byte_level.tokenizer)
+    special_tokens = ["[PAD]", "[UNK]", "[BOS]", "[EOS]", "[MASK]"]
+    additional_special_tokens = [cfg.line_sep, "\n"] + ["[LONG]"]
+    if cfg.msg_tokens:
+        additional_special_tokens += list(MessageProcessor.get_special_tokens().values())
+
+    if cfg.tokenizer.configuration == "byte_level":
+        tokenizer = ByteLevelBPETokenizer(**cfg.tokenizer.byte_level.tokenizer)
         tokenizer.train(
-            **cfg.byte_level.train,
+            **cfg.tokenizer.byte_level.train,
             files=[os.path.join(cfg.paths.tokenizer_dir, "diffs.txt")],
-            special_tokens=special_tokens
+            special_tokens=special_tokens + additional_special_tokens
         )
-    elif cfg.tokenizer_configuration == "whitespace_byte_level":
-        tokenizer = ByteLevelBPETokenizer(**cfg.byte_level.tokenizer)
-        tokenizer.pre_tokenizer = Sequence([WhitespaceSplit(), tokenizer.pre_tokenizer])
-        tokenizer.train(
-            **cfg.byte_level.train,
-            files=[os.path.join(cfg.paths.tokenizer_dir, "diffs.txt")],
-            special_tokens=special_tokens
-        )
-    elif cfg.tokenizer_configuration == "custom":
-        tokenizer = Tokenizer(instantiate(cfg.custom.tokenizer))
-        if cfg.custom.normalizer:
-            tokenizer.normalizer = instantiate(cfg.custom.normalizer)
-        if cfg.custom.pre_tokenizer:
-            tokenizer.pre_tokenizer = instantiate(cfg.custom.pre_tokenizer)
-        if cfg.custom.decoder:
-            tokenizer.decoder = instantiate(cfg.custom.decoder)
-        trainer = instantiate(cfg.custom.trainer, special_tokens=special_tokens)
+    elif cfg.tokenizer.configuration == "custom":
+        tokenizer = Tokenizer(instantiate(cfg.tokenizer.custom.tokenizer))
+        if cfg.tokenizer.custom.normalizer:
+            tokenizer.normalizer = instantiate(cfg.tokenizer.custom.normalizer)
+        if cfg.tokenizer.custom.pre_tokenizer:
+            tokenizer.pre_tokenizer = instantiate(cfg.tokenizer.custom.pre_tokenizer)
+        if cfg.tokenizer.custom.decoder:
+            tokenizer.decoder = instantiate(cfg.tokenizer.custom.decoder)
+        trainer = instantiate(cfg.tokenizer.custom.trainer, special_tokens=special_tokens + additional_special_tokens)
         tokenizer.train(
             trainer=trainer,
             files=[os.path.join(cfg.paths.tokenizer_dir, "diffs.txt")],
         )
     else:
-        raise ValueError("Unknown tokenizer configuration")
+        raise ValueError("Unknown tokenizer configuration. Pass one of: `byte_level`, `custom`")
 
     logging.info("Saving tokenizer")
 
     os.makedirs(
-        os.path.join(cfg.paths.tokenizer_dir, cfg.tokenizer_configuration, "transformers_format"), exist_ok=True
+        os.path.join(cfg.paths.tokenizer_dir, cfg.tokenizer.configuration, "transformers_format"), exist_ok=True
     )
     tokenizer.save(
-        os.path.join(cfg.paths.tokenizer_dir, cfg.tokenizer_configuration, "diff_tokenizer.json"), pretty=True
+        os.path.join(cfg.paths.tokenizer_dir, cfg.tokenizer.configuration, "diff_tokenizer.json"), pretty=True
     )
     transformers_tokenizer = PreTrainedTokenizerFast(
         tokenizer_object=tokenizer,
@@ -85,10 +81,10 @@ def main(cfg: DictConfig) -> None:
         cls_token="[BOS]",
         sep_token="[EOS]",
         mask_token="[MASK]",
-        additional_special_tokens=["[LONG]", "\n"] + [cfg.line_sep],
+        additional_special_tokens=additional_special_tokens,
     )
     transformers_tokenizer.save_pretrained(
-        os.path.join(cfg.paths.tokenizer_dir, cfg.tokenizer_configuration, "transformers_format")
+        os.path.join(cfg.paths.tokenizer_dir, cfg.tokenizer.configuration, "transformers_format")
     )
 
 

@@ -1,9 +1,8 @@
 data_format: jsonl
-
 line_sep: "[NL]"
 
 training_processor:
-  chunksize: 8182
+  chunksize: 4096
 
   diff_tokenizer_name_or_path:
   msg_tokenizer_name_or_path:
@@ -20,15 +19,16 @@ training_processor:
 
 only_messages: false
 only_diffs: false
-preprocess_data: true
 
+preprocess_data: true
 tokenize_data: true
-truncate_diffs: false
+truncate_diffs: true
 context_len: 512
 
 paths:
-  input_dir: extracted_data_jsonl
-  output_dir: processed_data/whitespace_byte_level
-  temp_dir: processed_data/temp
-  diff_tokenizer_name_or_path: tokenizer/whitespace_byte_level/transformers_format
-  msg_tokenizer_name_or_path: tokenizer/whitespace_byte_level/transformers_format
+  input_dir: extracted_data_jsonl/lexed
+  output_dir: processed_data/byte_level
+  temp_dir: processed_data/byte_level
+  diff_tokenizer_name_or_path: tokenizer/byte_level/transformers_format
+  msg_tokenizer_name_or_path: tokenizer/byte_level/transformers_format
+

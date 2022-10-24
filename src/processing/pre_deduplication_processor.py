@@ -24,14 +24,15 @@ class PreDeduplicationProcessor(BaseProcessor):
         self,
         project_id: int,
         data_format: str,
+        special_tokens: List[str],
         chunksize: Optional[int] = None,
         n_workers: Optional[int] = None,
         logger_name: Optional[str] = None,
     ):
         super().__init__(chunksize=chunksize, n_workers=n_workers, data_format=data_format, logger_name=logger_name)
         self._separators = r'[;.\[\]\(\)\~!\-\_\+\&\*/%<>\^\|\?\{\}=\#,"\\\:\$\'`@ +\n\r\t]'
+        self._special_tokens = special_tokens
         self._project_id = project_id
-        self._n_workers = n_workers
 
     def _get_diff_from_mods(self, mods: List[Dict[str, str]]) -> str:
         """Constructs single diff from all file modifications in one commit.
@@ -88,6 +89,8 @@ class PreDeduplicationProcessor(BaseProcessor):
         except TypeError as e:
             self.logger.error(f"[diff] {cur_id} produced TypeError {e}")
             processed_example = str(cur_mods)
+        for token in self._special_tokens:
+            processed_example = processed_example.replace(token, "")
         return processed_example
 
     def _preprocess_msg(self, cur_id: int, cur_message: str) -> str:
@@ -100,9 +103,11 @@ class PreDeduplicationProcessor(BaseProcessor):
         except AttributeError as e:
             self.logger.error(f"[message] {cur_id} produced AttributeError {e}")
             processed_example = str(cur_message)
+        for token in self._special_tokens:
+            processed_example = processed_example.replace(token, "")
         return processed_example
 
-    def process(self, chunk: pd.DataFrame, data_col: str, **kwargs) -> List[str]:
+    def process(self, chunk: pd.DataFrame, data_col: str, **kwargs) -> List[str]:  # type: ignore[override]
         """Processes each example in a chunk into format required by SourcererCC.
 
         Args:

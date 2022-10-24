@@ -1,41 +1,42 @@
 data_format: jsonl
-
 line_sep: "[NL]"
+msg_tokens: false
 
 diff_extractor:
   upper_percentile: 0.95
   chunksize: 32000
   n_workers: 16
 
-tokenizer_configuration: whitespace_byte_level
+tokenizer:
+  configuration: byte_level
 
-byte_level:
-  tokenizer:
-    dropout: 0.5
+  byte_level:
+    tokenizer:
+      dropout: 0.5
 
-  train:
-    vocab_size: 32000
-    min_frequency: 3
+    train:
+      vocab_size: 32000
+      min_frequency: 3
 
-custom:
-  tokenizer:
-    _target_: tokenizers.models.BPE
-    dropout: 0.5
+  custom:
+    tokenizer:
+      _target_: tokenizers.models.BPE
+      dropout: 0.5
 
-  normalizer: false
+    normalizer: false
 
-  pre_tokenizer:
-    _target_: tokenizers.pre_tokenizers.WhitespaceSplit
+    pre_tokenizer:
+      _target_: tokenizers.pre_tokenizers.Whitespace
 
-  decoder: false
+    decoder: false
 
-  trainer:
-    _convert_: all
-    _target_: tokenizers.trainers.BpeTrainer
-    special_tokens:
-    vocab_size: 32000
-    min_frequency: 3
+    trainer:
+      _convert_: all
+      _target_: tokenizers.trainers.BpeTrainer
+      special_tokens:
+      vocab_size: 32000
+      min_frequency: 3
 
 paths:
-  input_dir: extracted_data_jsonl
+  input_dir: extracted_data_jsonl/lexed
   tokenizer_dir: tokenizer

@@ -49,22 +49,28 @@ class TrainingProcessor(BaseProcessor):
         self._diff_tok = None
         if diff_tokenizer_name_or_path:
             self._diff_tok = AutoTokenizer.from_pretrained(diff_tokenizer_name_or_path)
+            assert self._diff_tok.is_fast
 
         self._msg_tok = None
         if msg_tokenizer_name_or_path:
             self._msg_tok = AutoTokenizer.from_pretrained(msg_tokenizer_name_or_path)
+            assert self._msg_tok.is_fast
 
         self._diff_kwargs = diff_kwargs
         self._msg_kwargs = msg_kwargs
 
     def _tokenize_diffs(self, diffs: List[str]) -> List[List[int]]:
+        if not self._diff_tok:
+            raise ValueError("Diff tokenizer is not set, please, pass `diff_tokenizer_name_or_path` argument.")
         return self._diff_tok(diffs, **self._diff_kwargs).input_ids
 
     def _tokenize_messages(self, msgs: List[str]) -> List[List[int]]:
+        if not self._msg_tok:
+            raise ValueError("Message tokenizer is not set, please, pass `msg_tokenizer_name_or_path` argument.")
         return self._msg_tok(msgs, **self._msg_kwargs).input_ids
 
     @staticmethod
-    def _get_diff_from_mods(commits: List[Dict[str, Union[str, List[str]]]], line_sep: str) -> List[str]:
+    def _get_diff_from_mods(commits: List[List[Dict[str, str]]], line_sep: str) -> List[str]:
 
         diffs: List[str] = []
 
@@ -163,8 +169,10 @@ class TrainingProcessor(BaseProcessor):
         )
         open(os.path.join(output_dir, "diffs", f"{part}.json"), mode="w").close()
         for chunk in tqdm(reader, desc=f"Tokenizing diffs in chunks ({self._chunksize} rows)"):
-            chunk["diff_input_ids"] = self._tokenize_diffs(chunk["diff"].tolist())
-
+            try:
+                chunk["diff_input_ids"] = self._tokenize_diffs(chunk["diff"].tolist())
+            except TypeError:
+                chunk["diff_input_ids"] = self._tokenize_diffs([str(diff) for diff in chunk["diff"].tolist()])
             with jsonlines.open(os.path.join(output_dir, "diffs", f"{part}.json"), mode="a") as writer:
                 writer.write_all(chunk[["diff_input_ids", "pos_in_history", "author"]].to_dict(orient="records"))
 
@@ -175,9 +183,9 @@ class TrainingProcessor(BaseProcessor):
         part: str,
         diffs_or_messages: str,
         line_sep: str,
-        preprocess_data: Optional[bool] = True,
-        clean_temp_files: Optional[bool] = False,
-        temp_dir: [Optional[str]] = None,
+        preprocess_data: bool = True,
+        clean_temp_files: bool = False,
+        temp_dir: Optional[str] = None,
         **kwargs,
     ) -> None:
         """This method processes only diffs or only messages into format required by our pipeline for training & evaluation
@@ -227,14 +235,15 @@ class TrainingProcessor(BaseProcessor):
                         example["truncated"] = False
                     writer.write(example)
 
-    def __call__(
+    def __call__(  # type: ignore[override]
         self,
         in_fname: str,
         output_dir: str,
         part: str,
         line_sep: str,
-        clean_temp_files: Optional[bool] = False,
-        temp_dir: [Optional[str]] = None,
+        clean_temp_files: bool = False,
+        preprocess_data: bool = True,
+        temp_dir: Optional[str] = None,
         **kwargs,
     ) -> None:
         """This method processes data into format required by our pipeline for training & evaluation
@@ -254,9 +263,11 @@ class TrainingProcessor(BaseProcessor):
         """
         if not temp_dir:
             temp_dir = output_dir
-
         logging.info(f"Start processing {part}")
-        self._preprocess_data(in_fname, output_dir, part, temp_dir, line_sep=line_sep)
+        if preprocess_data:
+            self._preprocess_data(in_fname, output_dir, part, temp_dir, line_sep=line_sep)
+        assert f"temp_{part}.csv" in os.listdir(temp_dir)
+
         self._process_messages(output_dir, part, temp_dir)
         self._process_diffs(output_dir, part, temp_dir)
         logging.info(f"Finish processing {part}")

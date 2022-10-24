@@ -1,7 +1,6 @@
 import logging
 from typing import List, Optional, Union
 
-import dask.dataframe as dd
 import jsonlines
 import pandas as pd
 from tqdm import tqdm
@@ -77,15 +76,6 @@ class JsonlManager(BaseManager):
             in_fname = f"{in_fname}.jsonl"
 
         return pd.read_json(in_fname, orient="records", lines=True, convert_dates=False, **kwargs)
-
-    def read_input_lazy(self, in_fname: str, add_data_format: Optional[bool] = True, **kwargs):
-        """
-        Reads jsonl data with dask.
-        """
-        if add_data_format:
-            in_fname = f"{in_fname}.jsonl"
-
-        return dd.read_json(in_fname, orient="records", lines=True, **kwargs)
 
 
 class BaseProcessor:

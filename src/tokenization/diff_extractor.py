@@ -32,7 +32,7 @@ class DiffExtractor(BaseProcessor):
         self._upper_percentile = upper_percentile
         self._percentiles: Dict[float, float] = {}
 
-    def prepare(self, in_fname: str, line_sep: str, **kwargs) -> None:
+    def prepare(self, in_fname: str, line_sep: str, **kwargs) -> None:  # type: ignore[override]
         """Calculates percentiles on diff lengths."""
         diff_lens = []
         reader = self._read_input(in_fname)
@@ -42,7 +42,7 @@ class DiffExtractor(BaseProcessor):
             self._percentiles[q] = np.quantile(diff_lens, q)
         self.logger.info(f"{self._percentiles}")
 
-    def process(self, chunk: pd.DataFrame, line_sep: str, **kwargs) -> List[str]:
+    def process(self, chunk: pd.DataFrame, line_sep: str, **kwargs) -> List[str]:  # type: ignore[override]
         chunk["diff"] = [line_sep.join([mod["diff"] for mod in commit]) + "\n" for commit in chunk["mods"].tolist()]
         chunk["diff_len"] = [len(diff) for diff in chunk["diff"].tolist()]
         chunk = chunk.loc[chunk["diff_len"] <= self._percentiles[self._upper_percentile]]

@@ -9,10 +9,15 @@ nltk==3.6.6
 pygments==2.10.0
 tokenizers~=0.12.1
 transformers~=4.21.1
-dask
 
 # utils
 tqdm==4.62.1
 hydra-core==1.1.1
-jsonlines
-sklearn
+jsonlines~=3.0.0
+sklearn~=1.1.2
+
+# code quality
+black~=22.6.0
+isort~=5.10.1
+mypy~=0.971
+pytest~=7.1.2

@@ -182,7 +182,7 @@ class OutliersProcessor(BaseProcessor):
                 ):
                     self._ids_to_drop.add(id)
 
-    def prepare(self, in_fname: str, n_tokens_dir: str, percentile_dir: Optional[str] = None, **kwargs) -> None:
+    def prepare(self, in_fname: str, n_tokens_dir: str, percentile_dir: Optional[str] = None, **kwargs) -> None:  # type: ignore[override]
         """Tokenizes diffs and messages and calculates percentiles for # of tokens.
 
         Args:

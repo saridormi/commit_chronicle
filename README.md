@@ -2,7 +2,7 @@
 
 ![GitHub](https://img.shields.io/github/license/saridormi/commits_dataset?style=for-the-badge)
 
-This repository contains code for collecting and processing diffs, messages and metadata of commits from open source GitHub repositories.
+This repository contains code for collecting and processing diffs, messages and metadata from commits from open-source GitHub repositories.
 
 ## Table of contents
 - [Ready-to-use dataset](#ready-to-use-dataset)
@@ -218,7 +218,7 @@ Follow these steps:
 
 4. **Define configuration**
 
-    Configuration is defined at [`configs/process_data.yaml`](configs/process_data.yaml).   
+    Configuration is defined at [`configs/process_data.yaml`](configs/process_data.yaml).
 
     <details>
       <summary>:yellow_heart: click here for more information about possible options</summary>
@@ -227,58 +227,77 @@ Follow these steps:
 
       ```
       data_format: ...
+      line_sep: ...
+   
+      parts:
+         ...
    
       outliers_processor:
+         args: ...
          ...
    
       message_processor:
+         args: ...
          ...
    
       diff_processor:
+         args: ...
          ...
    
       lexer:
+         args: ...
          ...
-      
+   
       pre_deduplication_processor:
+         args: ...
          ...
    
       post_deduplication_processor:
+         args: ...
          ...
    
-      final_processor:
+      metadata_processor:
+         args: ...
          ...
    
       paths:
          input_dir: ...
-         licenses_dir: ...
          tokens_percentile_dir: ...
          literals_percentile_dir: ...
          deduplication_dir: ...
+         metadata_dir: ...
       ```
    
-      * `data_format`: format to use for reading & writing data; currently, only `jsonl` is supported
-      * `clones_ready`: boolean, stops after `pre_deduplication_processor` stage if set to `False`
+      * `data_format`: String, format to use for reading & writing data; currently, only `jsonl` is supported.
+      * `line_sep`: String, will be used as line separator.
+      * `parts`: List of strings, dataset parts.
       * `paths`:
       
         Paths are moved to separate key to convert them all to absolute paths via hydra.
-        * `input_dir`: directory to read data from
-        * `licenses_dir`: directory to read repository-license mapping from
-        * `tokens_percentile_dir`: directory to save percentiles for # tokens
-        * `literals_percentile_dir`: directory to save percentiles for literals lengths
-        * `deduplication_dir`: directory to save clone search results
+        * `input_dir`: Directory to read data from.
+        * `tokens_percentile_dir`: Directory to save percentiles for # tokens.
+        * `literals_percentile_dir`: Directory to save percentiles for literals lengths.
+        * `deduplication_dir`: Directory to save clone search results.
+        * `metadata_dir`: Directory to read/save metadata about authors, licenses, etc.
 
-      Each processor accepts two keyword arguments:
-      * `chunksize`: # of examples in single data chunk (large files are processed in chunks) (optional, default value is 1000)
-      * `n_workers`: # of threads for data processing (optional, default value is 1)
+      Every processor has `args` subkey for the same keyword arguments:
+      * `chunksize`: Number of examples in single data chunk (large files are processed in chunks) (optional, default value is 1000).
+      * `n_workers`: Number of workers for data processing (optional, default value is 1 => sequential).
    
-      Some processors also accept other keywords arguments:
+      Some processors also accept specific keywords arguments:
       * `outliers_processor`:
-        * `lower_percentile`: # tokens percentile to use as lower bound (should be in (0, 1) range)
-        * `upper_percentile`: # tokens percentile to use as upper bound (should be in (0, 1) range)
-        * `diff_upper_bound`: constant upper bound for # tokens in diffs (optional)
+        * `lower_percentile`: Percentile of # tokens to use as lower bound (should be in (0, 1) range).
+        * `upper_percentile`: Percentile of # tokens to use as upper bound (should be in (0, 1) range).
+        * `diff_upper_bound`: Constant upper bound for # tokens in diffs (optional).
+      * `message_processor`:
+        * `replace_patterns`: True to replace unwanted patterns in messages with special tokens, False to just delete them. 
       * `lexer`:
-        * `upper_percentile`: literals' lengths percentile to use as upper bound (should be in (0, 1) range)
+        * `upper_percentile`: Percentile of lexemes' lengths to use as upper bound (should be in (0, 1) range).
+      * `post_deduplication_processor`:
+        * `only_full_inner_clones`: True to drop clones both in terms of diffs and in terms of messages, False to drop clones either in terms of diffs or in terms of messages.
+        * `only_train_inner_clones`: True to drop inner clones (clones within the same dataset part) only for train, False to do it for all dataset parts.
+        * `only_train_outer_clones`: True to drop outer clones (clones between different dataset parts) only for train, False to do it for all dataset parts.
+        * `identical_clones`: True to use logic for 100% clones, False to use logic for similar clones.
    </details>
     
 5. **Process data**
@@ -288,13 +307,12 @@ Follow these steps:
     ```
     python -m src.process_data
     ```
-   
-    Note that the script above doesn't include deduplication. When you have files with ids of duplicated entries ready, 
-    run the following command:
-    
-    ```
-    python -m src.drop_clones
-    ```
+
+    > :star2: Note that you can skip any processing stage by setting corresponding config key to `False`. 
+    For example, here is how you can skip deduplication stage with [hydra's override syntax](https://hydra.cc/docs/advanced/override_grammar/basic/):
+    > ```
+    >  python -m src.process_data post_deduplication_processing=False
+    >  ```
 
 ### Stages
 
@@ -302,8 +320,11 @@ Follow these steps:
 
 ## Training tokenizer
 
-This repo also contains code for training custom tokenizer on diffs from collected data
-via [🤗 Tokenizers](https://huggingface.co/tokenizers/) library.
+This repo also contains code for training tokenizer on diffs from collected data
+via [🤗Tokenizers](https://huggingface.co/tokenizers/) library. 
+
+Currently, you can either train byte-level BPE tokenizer
+or define all components from [🤗Tokenizers](https://huggingface.co/tokenizers/) manually.
 
 ### How to use
 
@@ -340,52 +361,60 @@ Follow these steps:
 
       ```
       data_format: ...
-      n_train_examples: ...
-   
+      line_sep: ...
+      msg_tokens: ...
+
       diff_extractor:
-        upper_percentile: ...
         chunksize: ...
         n_workers: ...
+        upper_percentile: ...
+        n_train_examples: ...
    
       tokenizer:
-         _target_: tokenizers.models.BPE
-         ...
-   
-      pre_tokenizer:
-          _target_: tokenizers.pre_tokenizers.ByteLevel
-          ...
-   
-      trainer:
-         _target_: tokenizers.trainers.BpeTrainer
-         ...
+         configuration: ...
+         byte_level: 
+            tokenizer: ...
+            train: ...
+         custom:
+           tokenizer: ...
+           normalizer: ...
+           pre_tokenizer: ...
+           decoder: ...
+           trainer: ...
    
       paths:
         input_dir: ...
         tokenizer_dir: ...
-        percentile_dir: ...
       ```
    
-      * `data_format`: format to use for reading & writing data; currently, only `jsonl` is supported
-      * `n_train_examples`: how many diffs from train will be used for tokenizer training (optional, 
-         remove this key to use all diffs)
+      * `data_format`: String, format to use for reading & writing data; currently, only `jsonl` is supported.
+      * `line_sep`: String, will be used as line separator.
+      * `msg_tokens`: True to add special tokens to replace unwanted patterns to tokenizer, False otherwise.
+      
       * `diff_extractor`
    
         This class is used to extract given number of diffs from train part of dataset. It accepts the following arguments:
-        * `upper_percentile`: diffs' lengths percentile to use as upper bound (should be in (0, 1) range)
-        * `chunksize`: # of examples in single data chunk (large files are processed in chunks) (optional, default value is 1000)
-        * `n_workers`: # of threads for data processing (optional, default value is 1)
-   
-      * `tokenizer`/`pre_tokenizer`/`trainer`
-      
-        All arguments except `_target_` are passed to corresponding target class. 
-      See [🤗 Tokenizers documentation](https://huggingface.co/docs/tokenizers/python/v0.9.4/) for more information.
-      
+        * `chunksize`: Number of examples in single data chunk (large files are processed in chunks) (optional, default value is 1000).
+        * `n_workers`: Number of workers for data processing (optional, default value is 1 => sequential).
+        * `upper_percentile`: Percentile of diffs' lengths to use as upper bound (should be in (0, 1) range).
+        * `n_train_examples`: A number of examples from train to use for tokenizer training (optional, if this key is empty or not present, all examples will be used).        
+
+      * `tokenizer`:
+        * `configuration`: Tokenizer configuration to use. Currently, `byte_level` and `custom` are supported.
+        * `byte_level`:
+
+           [ByteLevelBPETokenizer from 🤗Tokenizers](https://github.com/huggingface/tokenizers/blob/v0.12.0/bindings/python/py_src/tokenizers/implementations/byte_level_bpe.py) will be used.
+           * `tokenizer`: All arguments are passed to [ByteLevelBPETokenizer](https://github.com/huggingface/tokenizers/blob/v0.12.0/bindings/python/py_src/tokenizers/implementations/byte_level_bpe.py) class.
+           * `train`: All arguments are passed to `train` method of  [ByteLevelBPETokenizer](https://github.com/huggingface/tokenizers/blob/v0.12.0/bindings/python/py_src/tokenizers/implementations/byte_level_bpe.py).
+         * `custom`: 
+           
+           Define all tokenizer components from [🤗Tokenizers](https://huggingface.co/docs/tokenizers/components): normalizer, pre_tokenizer, tokenizer, normalizer, decoder.
+           Hydra's instantiate semantic is used.
       * `paths`:
       
           Paths are moved to separate key to convert them to absolute paths via hydra.
-          * `input_dir`: directory to read data from
-          * `tokenizer_dir`: directory to save tokenizer to
-          * `percentile_dir`: directory to save percentiles for literals` lengths
+          * `input_dir`: Directory to read data from.
+          * `tokenizer_dir`: Directory to save tokenizer to.
    </details>
 
 6. **Train tokenizer**
@@ -398,11 +427,8 @@ Follow these steps:
 
 ## Data tokenization
 
-This repository also contains code for tokenization of collected data.
-
-> :exclamation: Tokenized data is saved to specific format 
-required by [our pipeline for training & evaluation of Transformer models 
-> for commit message completion task](https://github.com/JetBrains-Research/commit_message_generation).
+This repository also contains code for processing data to specific format 
+required by [our pipeline for training & evaluation of Transformer models for commit message completion task](https://github.com/JetBrains-Research/commit_message_generation).
    
 ### How to use
 
@@ -425,7 +451,7 @@ Follow these steps:
 
     > :exclamation: Having part called `train` is necessary for correct work of tokenization script.
 
-    Tokenizer training script expects input data to be stored in the same format collection script saves it. See all the details above,
+    Data tokenization script expects input data to be stored in the same format collection script saves it. See all the details above,
     at [data format](#data-format) section.
 
 4. **Define configuration**
@@ -439,48 +465,69 @@ Follow these steps:
 
       ```
       data_format: ...
+      line_sep: ...
 
       training_processor:
          chunksize: ...
-         clean_temp_files: ...
-         msg_tokenizer_name: ...
+   
+         diff_tokenizer_name_or_path: ...
+         msg_tokenizer_name_or_path: ...
+   
          diff_kwargs:
            ...
          msg_kwargs:
            ...
-    
+      
+      only_messages: ...
+      only_diffs: ...
+
+      preprocess_data: ...
+      tokenize_data: ...
+      truncate_diffs: ...
+      context_len: ...
+   
       paths:
          diff_tokenizer_path: ...
          input_dir: ...
          output_dir: ...
       ```
    
-      * `data_format`: format to use for reading & writing data; currently, only `jsonl` is supported
-   
+      * `data_format`: String, format to use for reading & writing data; currently, only `jsonl` is supported.
+      * `line_sep`: String, will be used as line separator.
+      
       * `training_processor`:
-        * `chunksize`: # of examples in single data chunk (large files are processed in chunks)
-        * `clean_temp_files`: True to remove temporary files, False to keep (optional, default value is True)
-        * `diff_tokenizer_name_or_path`: name on HuggingFace Hub or local path to diff tokenizer
-           (see [🤗 Transformers documentation](https://huggingface.co/transformers/v4.2.2/model_doc/auto.html#transformers.AutoTokenizer.from_pretrained) for more information)
-        * `msg_tokenizer_name_or_path`: name on HuggingFace Hub or local path to message tokenizer
-           (see [🤗 Transformers documentation](https://huggingface.co/transformers/v4.2.2/model_doc/auto.html#transformers.AutoTokenizer.from_pretrained) for more information)
+        * `chunksize`: Number of examples in single data chunk (large files are processed in chunks) (optional, default value is 1000).
+
+        * `diff_tokenizer_name_or_path`: Name on HuggingFace Hub for diff tokenizer, keep empty if you want to use local path.
+           (see [🤗 Transformers documentation](https://huggingface.co/docs/transformers/model_doc/auto#transformers.AutoTokenizer.from_pretrained) for more information)
+        * `msg_tokenizer_name_or_path`: Name on HuggingFace Hub for message tokenizer, keep empty if you want to use local path.
+           (see [🤗 Transformers documentation](https://huggingface.co/docs/transformers/model_doc/auto#transformers.AutoTokenizer.from_pretrained) for more information)
         * `diff_kwargs`: 
         
           All keyword arguments under this key are passed to diff tokenizer. 
-           See [🤗 Transformers documentation](https://huggingface.co/transformers/v4.2.2/main_classes/tokenizer.html#transformers.PreTrainedTokenizerFast.__call__) for more information.
+           See [🤗 Transformers documentation](https://huggingface.co/docs/transformers/main_classes/tokenizer#transformers.PreTrainedTokenizerFast.__call__) for more information.
       
         * `msg_kwargs`:
         
           All keyword arguments under this key are passed to message tokenizer. 
-           See [🤗 Transformers documentation](https://huggingface.co/transformers/v4.2.2/main_classes/tokenizer.html#transformers.PreTrainedTokenizerFast.__call__) for more information.
-      
+           See [🤗 Transformers documentation](https://huggingface.co/docs/transformers/main_classes/tokenizer#transformers.PreTrainedTokenizerFast.__call__) for more information.
+      * There are several keys that allow to tweak the logic for this script.
+        * `only_messages`/`only_diffs`: True to process only the corresponding data type with given tokenizer. Might be useful for cases when we want to initialize encoder and decoder with different pretrained models, hence, with different tokenizers.
+        * `preprocess_data`: True to run data preprocessing (aggregating commit message history, etc., everything that comes before tokenization), False to search for preprocessed files in `paths/temp_dir`.
+        * `tokenize_data`: True to run data tokenization.
+        * `truncate_diffs`: True to iterate over tokenized diffs and create additional version, where each example is trimmed to `context_len` tokens.
+        * `context_len`: Maximum number of tokens if `truncate_diffs` is set to True.
+   
       * `paths`:
         Paths are moved to separate key to convert them all to absolute paths via hydra.
-        * `input_dir`: directory to read data from
-        * `output_dir`: directory to save tokenized data to
+        * `input_dir`: Directory to read data from.
+        * `output_dir`: Directory to save tokenized data to.
+        * `temp_dir`: Directory to save preprocessed version of input data (there are several steps like aggregating message history for each author; these temp versions might be reused with different tokenizers to save time).
+        * `diff_tokenizer_name_or_path`: Local path to diff tokenizer, keep empty if you want to use pretrained tokenizer from HuggingFace Hub.
+        * `msg_tokenizer_name_or_path`: Local path to message tokenizer, keep empty if you want to use pretrained tokenizer from HuggingFace Hub.
    </details>
     
-5. **Train tokenizer**
+5. **Tokenize data**
 
    To start tokenizing data, run the following command:
 

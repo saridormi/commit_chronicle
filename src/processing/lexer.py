@@ -60,7 +60,7 @@ class Lexer(BaseProcessor):
         # (note: they all contain some gsql, might be related to https://github.com/pygments/pygments/pull/2006)
         self._examples_to_skip = [1731725, 1731749, 1731755, 1731759, 1732004]
 
-    def _is_lexeme_allowed(self, lexeme: Tuple[_TokenType, str]) -> bool:
+    def _get_allowed_lexeme(self, lexeme: Tuple[_TokenType, str]) -> str:
         """Checks if current lexeme is allowed.
         Lexeme is allowed if:
         * it is a docstring literal
@@ -68,9 +68,17 @@ class Lexer(BaseProcessor):
         * it is shorter than `self._upper_percentile`
         """
         if lexeme[0] == Literal.String.Doc or lexeme[0] in Comment:
-            return True
+            return lexeme[1]
 
-        return len(lexeme[1]) <= self._percentiles[self._upper_percentile]
+        if len(lexeme[1]) > self._percentiles[self._upper_percentile]:
+            token = "[LONG]"
+            if lexeme[1].startswith("-") or lexeme[1].startswith("+"):
+                token = lexeme[1][0] + token
+            if lexeme[1].endswith("\n"):
+                token += "\n"
+            return token
+
+        return lexeme[1]
 
     def _lex_diff(self, id: int, fname: str, diff: str) -> Iterable[Tuple[_TokenType, str]]:
         """Finds appropriate lexer based on diff and filename and returns resulting lexemes.
@@ -91,6 +99,7 @@ class Lexer(BaseProcessor):
     def _lex_commit_mods(self, cur_id: int, cur_mods: List[Dict[str, str]]) -> List[Dict[str, Union[str, List[str]]]]:
         """Iterates over all modifications in current commit and tokenizes each of them."""
 
+        new_mods = []
         for mod in cur_mods:
             if mod["change_type"] == "UNKNOWN":
                 continue
@@ -100,18 +109,21 @@ class Lexer(BaseProcessor):
                 fname = mod["new_path"]
 
             # drop literals with lengths more than upper percentile
-            diff = [
-                lexeme[1] if self._is_lexeme_allowed(lexeme) else "[LONG]"
-                for lexeme in self._lex_diff(cur_id, fname, mod["diff"])
-            ]
+            diff = [self._get_allowed_lexeme(lexeme) for lexeme in self._lex_diff(cur_id, fname, mod["diff"])]
 
             if len(diff) == 1 and diff[0].strip() == "[LONG]":
                 self.logger.error(f"Whole diff as a single token! id: {cur_id}, fname: {fname}")
                 diff = [lexeme[1] for lexeme in self._lex_diff(cur_id, fname, mod["diff"])]
 
-            mod["diff"] = diff
+            new_mod: Dict[str, Union[str, List[str]]] = {
+                "change_type": mod["change_type"],
+                "old_path": mod["old_path"],
+                "new_path": mod["new_path"],
+                "diff": diff,
+            }
+            new_mods.append(new_mod)
 
-        return cur_mods
+        return new_mods
 
     def _get_literals_len_mods(self, cur_id: int, cur_mods: List[Dict[str, str]]) -> List[int]:
         """Iterates over all modifications in current commit,
@@ -180,13 +192,13 @@ class Lexer(BaseProcessor):
         with open(os.path.join(literals_len_dir, "literals_len.txt"), "r") as file:
             literals_lens = [int(line.strip()) for line in file]
 
-        for q in [0.01, 0.05, 0.1, 0.25, 0.5, 0.75, 0.9, 0.95, 0.99]:
+        for q in [0.01, 0.05, 0.1, 0.25, 0.5, 0.75, 0.9, 0.95, 0.99, 1.0]:
             self._percentiles[q] = np.quantile(literals_lens, q)
 
         with open(os.path.join(literals_len_dir, "literals.json"), "w") as file:
             json.dump(self._percentiles, file)
 
-    def prepare(self, in_fname: str, literals_len_dir: str, percentile_dir: Optional[str] = None, **kwargs) -> None:
+    def prepare(self, in_fname: str, literals_len_dir: str, percentile_dir: Optional[str] = None, **kwargs) -> None:  # type: ignore[override]
         """Runs lexers on diffs and removes literals with lengths more than percentiles.
 
         Args:
@@ -227,7 +239,7 @@ class Lexer(BaseProcessor):
 
         return chunk
 
-    def __call__(self, in_fname: str, out_fname: str, delimiter_out_fname: str, **kwargs) -> None:
+    def __call__(self, in_fname: str, out_fname: str, delimiter_out_fname: str, **kwargs) -> None:  # type: ignore[override]
         """Iterates over input data in chunks, lexes it and saves results to separate file.
 
         In this particular case, there are two versions of output files:

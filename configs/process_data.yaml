@@ -1,40 +1,57 @@
 data_format: jsonl
+line_sep: "[NL]"
+
+parts:
+  - train
+  - val
+  - test
 
 outliers_processor:
-  chunksize: 256
-  n_workers: 4
+  args:
+    chunksize: 256
+    n_workers: 4
   lower_percentile: 0.01
   upper_percentile: 0.95
 
 message_processor:
-  chunksize: 16000
-  n_workers: 16
+  args:
+    chunksize: 16000
+    n_workers: 16
+  replace_patterns: false
 
 diff_processor:
-  chunksize: 16000
-  n_workers: 16
+  args:
+    chunksize: 16000
+    n_workers: 16
 
 lexer:
+  args:
+    chunksize: 16000
+    n_workers: 16
   upper_percentile: 0.99
-  chunksize: 16000
-  n_workers: 16
 
 pre_deduplication_processor:
-  chunksize: 1000
-  n_workers: 8
+  args:
+    chunksize: 1000
+    n_workers: 8
 
 post_deduplication_processor:
-  chunksize: 1000
-  n_workers: 8
+  args:
+    chunksize: 16000
+    n_workers: 8
+  only_full_inner_clones: false
+  only_train_inner_clones: false
+  only_train_outer_clones: true
+  identical_clones: false
 
-final_processor:
-  chunksize: 1000
-
-line_sep: "[NL]"
+metadata_processor:
+  args:
+    chunksize: 8000
+    n_workers: 16
 
 paths:
   input_dir: extracted_data_jsonl
-  licenses_dir: repos
   tokens_percentile_dir: n_tokens
-  literals_percentile_dir: literals_len
+  literals_percentile_dir: lexeme_len
   deduplication_dir: deduplication
+  metadata_dir: metadata
