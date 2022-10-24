@@ -83,7 +83,7 @@ def main(cfg: DictConfig) -> None:
         mask_token="[MASK]",
         additional_special_tokens=additional_special_tokens,
     )
-    transformers_tokenizer.save_pretrained(
+    transformers_tokenizer.save_pretrained(  # type: ignore[attr-defined]
         os.path.join(cfg.paths.tokenizer_dir, cfg.tokenizer.configuration, "transformers_format")
     )
 
