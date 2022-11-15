@@ -10,8 +10,8 @@ outliers_processor:
   args:
     chunksize: 256
     n_workers: 4
-  lower_percentile: 0.01
-  upper_percentile: 0.95
+  lower_percentile: 5
+  upper_percentile: 95
 
 message_processor:
   args:
@@ -51,7 +51,7 @@ metadata_processor:
 
 paths:
   input_dir: extracted_data_jsonl
-  tokens_percentile_dir: n_tokens
+  stats_percentile_dir: n_tokens
   literals_percentile_dir: lexeme_len
   deduplication_dir: deduplication
   metadata_dir: metadata

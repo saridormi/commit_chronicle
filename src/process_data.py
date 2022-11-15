@@ -48,13 +48,13 @@ def main(cfg: DictConfig) -> None:
 
             percentile_dir = None
             if part != "train":
-                percentile_dir = os.path.join(cfg.paths.tokens_percentile_dir, "train")
-            os.makedirs(os.path.join(cfg.paths.tokens_percentile_dir, part), exist_ok=True)
+                percentile_dir = os.path.join(cfg.paths.stats_percentile_dir, "train")
+            os.makedirs(os.path.join(cfg.paths.stats_percentile_dir, part), exist_ok=True)
 
             processor(
                 in_fname=os.path.join(cfg.paths.input_dir, part),
                 out_fname=os.path.join(cfg.paths.input_dir, "filtered_outliers", part),
-                prepare_n_tokens_dir=os.path.join(cfg.paths.tokens_percentile_dir, part),
+                prepare_stats_dir=os.path.join(cfg.paths.stats_percentile_dir, part),
                 prepare_percentile_dir=percentile_dir,
             )
 
