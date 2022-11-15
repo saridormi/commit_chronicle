@@ -97,7 +97,7 @@ class PostDeduplicationProcessor(BaseProcessor):
         for x, x_clones in tqdm(inner_df["ex2"].iteritems(), total=inner_df.shape[0], desc="Processing inner clones"):
             flag = False
             for key in new_clones:
-                if x in new_clones[key]:
+                if x in new_clones[key] or x_clones & new_clones[key]:
                     if flag:
                         raise ValueError(f"{x} is present in more than one clone group!")
                     new_clones[key] |= x_clones

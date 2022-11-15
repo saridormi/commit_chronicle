@@ -34,7 +34,7 @@ class Lexer(BaseProcessor):
     lexemes are separated by additional space characters.
 
     Args:
-        upper_percentile: Percentile to use as an upper bound (should be in (0, 1) range).
+        upper_percentile: Percentile to use as an upper bound (should be in [1, 100] range).
         data_format: In which format mined data is saved.
         chunksize: Number of examples to process at once (data is read in chunks). Optional, default value is 1000.
         n_workers: Maximum number of concurrently running jobs. Optional, default value is 1 (sequential execution).
@@ -43,7 +43,7 @@ class Lexer(BaseProcessor):
 
     def __init__(
         self,
-        upper_percentile: float,
+        upper_percentile: int,
         line_sep: str,
         data_format: str,
         chunksize: Optional[int] = None,
@@ -54,7 +54,7 @@ class Lexer(BaseProcessor):
 
         self._upper_percentile = upper_percentile
         self._line_sep = line_sep
-        self._percentiles: Dict[float, float] = {}
+        self._percentiles: Dict[int, float] = {}
 
         # TODO: these examples make pygments hang ;( currently they are manually skipped
         # (note: they all contain some gsql, might be related to https://github.com/pygments/pygments/pull/2006)
@@ -192,8 +192,8 @@ class Lexer(BaseProcessor):
         with open(os.path.join(literals_len_dir, "literals_len.txt"), "r") as file:
             literals_lens = [int(line.strip()) for line in file]
 
-        for q in [0.01, 0.05, 0.1, 0.25, 0.5, 0.75, 0.9, 0.95, 0.99, 1.0]:
-            self._percentiles[q] = np.quantile(literals_lens, q)
+        for p in [1, 5, 10, 25, 50, 75, 90, 95, 99, 100]:
+            self._percentiles[p] = np.percentile(literals_lens, p)
 
         with open(os.path.join(literals_len_dir, "literals.json"), "w") as file:
             json.dump(self._percentiles, file)
@@ -210,7 +210,7 @@ class Lexer(BaseProcessor):
         if percentile_dir:
             # read precomputed percentiles
             with open(os.path.join(percentile_dir, "literals.json"), "r") as file:
-                self._percentiles = json.load(file, object_hook=lambda d: {float(k): v for k, v in d.items()})
+                self._percentiles = json.load(file, object_hook=lambda d: {int(k): float(v) for k, v in d.items()})
         else:
             # compute percentiles
             self._get_literals_len(in_fname=in_fname, literals_len_dir=literals_len_dir)

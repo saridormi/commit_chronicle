@@ -36,7 +36,7 @@ def main(cfg: DictConfig) -> None:
     # -----------------------------
     # -      train tokenizer      -
     # -----------------------------
-    special_tokens = ["[PAD]", "[UNK]", "[BOS]", "[EOS]", "[MASK]"]
+    special_tokens = ["[PAD]", "[UNK]", "[BOS]", "[EOS]", "[SEP]", "[MASK]"]
     additional_special_tokens = [cfg.line_sep, "\n"] + ["[LONG]"]
     if cfg.msg_tokens:
         additional_special_tokens += list(MessageProcessor.get_special_tokens().values())
@@ -79,7 +79,7 @@ def main(cfg: DictConfig) -> None:
         eos_token="[EOS]",
         unk_token="[UNK]",
         cls_token="[BOS]",
-        sep_token="[EOS]",
+        sep_token="[SEP]",
         mask_token="[MASK]",
         additional_special_tokens=additional_special_tokens,
     )

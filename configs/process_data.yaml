@@ -28,7 +28,7 @@ lexer:
   args:
     chunksize: 16000
     n_workers: 16
-  upper_percentile: 0.99
+  upper_percentile: 99
 
 pre_deduplication_processor:
   args:

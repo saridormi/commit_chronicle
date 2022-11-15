@@ -125,22 +125,20 @@ def main(cfg: DictConfig) -> None:
     # - preprocess data into SourcererCC format -
     # -------------------------------------------
     if cfg.pre_deduplication_processor:
+        pre_d_processor = PreDeduplicationProcessor(
+            **cfg.pre_deduplication_processor.args,
+            data_format=cfg.data_format,
+            logger_name="prededupl_processor",
+            special_tokens=["[LONG]", cfg.line_sep] + list(MessageProcessor.get_special_tokens().values()),
+        )
         os.makedirs(os.path.join(cfg.paths.deduplication_dir, "raw"), exist_ok=True)
         for part_id, part in enumerate(parts):
-
-            pre_d_processor = PreDeduplicationProcessor(
-                **cfg.pre_deduplication_processor.args,
-                project_id=part_id + 1,
-                data_format=cfg.data_format,
-                logger_name="prededupl_processor",
-                special_tokens=["[LONG]", cfg.line_sep] + list(MessageProcessor.get_special_tokens().values()),
-            )
-
             logging.info(f"Processing messages from {part} into SourcererCC format")
             pre_d_processor(
                 in_fname=os.path.join(cfg.paths.input_dir, "lexed", part),
                 out_fname=os.path.join(cfg.paths.deduplication_dir, "raw", f"{part}_message.txt"),
                 data_col="message",
+                project_id=part_id + 1,
                 add_data_format=False,
             )
 
@@ -149,8 +147,10 @@ def main(cfg: DictConfig) -> None:
                 in_fname=os.path.join(cfg.paths.input_dir, "lexed", part),
                 out_fname=os.path.join(cfg.paths.deduplication_dir, "raw", f"{part}_diffs.txt"),
                 data_col="mods",
+                project_id=part_id + 1,
                 add_data_format=False,
             )
+        pre_d_processor.save_map(os.path.join(cfg.paths.metadata_dir, "ids_map.json"))
 
     # ----------------------------
     # -       drop clones        -

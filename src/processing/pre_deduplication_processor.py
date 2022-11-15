@@ -1,10 +1,10 @@
 import hashlib
+import json
 import re
 from collections import Counter
-from typing import Dict, List, Optional, Union
+from typing import Dict, List, Optional, Tuple, Union
 
 import pandas as pd
-from joblib import Parallel, delayed
 
 from ..utils import BaseProcessor
 
@@ -22,7 +22,6 @@ class PreDeduplicationProcessor(BaseProcessor):
 
     def __init__(
         self,
-        project_id: int,
         data_format: str,
         special_tokens: List[str],
         chunksize: Optional[int] = None,
@@ -32,7 +31,7 @@ class PreDeduplicationProcessor(BaseProcessor):
         super().__init__(chunksize=chunksize, n_workers=n_workers, data_format=data_format, logger_name=logger_name)
         self._separators = r'[;.\[\]\(\)\~!\-\_\+\&\*/%<>\^\|\?\{\}=\#,"\\\:\$\'`@ +\n\r\t]'
         self._special_tokens = special_tokens
-        self._project_id = project_id
+        self._ids_map: Dict[Tuple[int, int], int] = {}
 
     def _get_diff_from_mods(self, mods: List[Dict[str, str]]) -> str:
         """Constructs single diff from all file modifications in one commit.
@@ -52,7 +51,9 @@ class PreDeduplicationProcessor(BaseProcessor):
         """Splits given string by punctuation and whitespaces."""
         return [y.strip() for y in re.split(self._separators, x) if y]
 
-    def _process_single_example(self, cur_id: int, cur_example: Union[str, List[Dict[str, str]]]) -> str:
+    def _process_single_example(
+        self, cur_id: int, project_id: int, cur_example: Union[str, List[Dict[str, str]]]
+    ) -> str:
         """Converts a single example into format required by SourcererCC.
 
         It includes the following steps:
@@ -75,7 +76,12 @@ class PreDeduplicationProcessor(BaseProcessor):
         )
         total_n_tokens = sum(c.values())
         unique_n_tokens = len(c)
-        return f"{self._project_id},{cur_id},{total_n_tokens},{unique_n_tokens},{tokens_enc}\n"
+
+        if (project_id, cur_id) not in self._ids_map:
+            self._ids_map[(project_id, cur_id)] = len(self._ids_map)
+        cur_unique_id = self._ids_map[(project_id, cur_id)]
+
+        return f"{project_id},{cur_unique_id},{total_n_tokens},{unique_n_tokens},{tokens_enc}\n"
 
     def _preprocess_mods(self, cur_id: int, cur_mods: List[Dict[str, str]]) -> str:
         """Preprocesses modifications from single commit, which currently includes the following:
@@ -107,16 +113,20 @@ class PreDeduplicationProcessor(BaseProcessor):
             processed_example = processed_example.replace(token, "")
         return processed_example
 
-    def process(self, chunk: pd.DataFrame, data_col: str, **kwargs) -> List[str]:  # type: ignore[override]
+    def save_map(self, out_path: str):
+        with open(out_path, "w") as f:
+            json.dump({f"{key[0]}[SEP]{key[1]}": self._ids_map[key] for key in self._ids_map}, f)
+
+    def process(self, chunk: pd.DataFrame, project_id: int, data_col: str, **kwargs) -> List[str]:  # type: ignore[override]
         """Processes each example in a chunk into format required by SourcererCC.
 
         Args:
             chunk: Small subset of original dataset.
             data_col: Should be `message` to process messages or `mods` to process diffs.
         """
-        with Parallel(self._n_workers) as pool:
-            res = pool(
-                delayed(self._process_single_example)(cur_id=item["id"], cur_example=item[data_col])
-                for _, item in chunk[["id", data_col]].iterrows()
-            )
+        res = [
+            self._process_single_example(cur_id=item["id"], cur_example=item[data_col], project_id=project_id)
+            for _, item in chunk[["id", data_col]].iterrows()
+        ]
+
         return res
