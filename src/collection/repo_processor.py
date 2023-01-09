@@ -1,7 +1,7 @@
 import gzip
 import os
 from configparser import NoOptionError
-from typing import Optional
+from typing import Any, Optional
 
 import pandas as pd
 from pydriller import RepositoryMining
@@ -125,3 +125,6 @@ class RepoProcessor(BaseProcessor):
                 cur_idx += cur_len
             except ValueError as e:
                 self.logger.error(f"[{repo_name}] Couldn't read; {e}")
+
+    def process(self, chunk: Any, **kwargs) -> Any:
+        raise NotImplementedError

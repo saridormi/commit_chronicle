@@ -3,7 +3,6 @@ line_sep: "[NL]"
 msg_tokens: false
 
 diff_extractor:
-  upper_percentile: 0.95
   chunksize: 32000
   n_workers: 16
 

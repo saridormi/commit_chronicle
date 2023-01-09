@@ -1,6 +1,7 @@
 import json
 from typing import Dict, List, Optional, Set, Tuple
 
+import jsonlines
 import pandas as pd
 from tqdm import tqdm
 
@@ -30,9 +31,10 @@ class MetadataProcessor(BaseProcessor):
         super().__init__(chunksize=chunksize, n_workers=n_workers, data_format=data_format, logger_name=logger_name)
 
         self._authors: Set[Tuple[str, str]] = set()
-        self._bot_authors: Set[Tuple[str, str]]
-        self._repo_license_map: Dict[str, str]
-        self._authors_repo_map: Dict[Tuple[str, str, str], int]
+        self._bot_authors: Set[Tuple[str, str]] = set()
+        self._repo_license_map: Dict[str, str] = {}
+        self._authors_repo_map: Dict[Tuple[str, str, str], int] = {}
+        self._ids_history_position_map: Dict[int, int] = {}
 
     def _get_authors(self, in_fnames: List[str]) -> None:
         """Builds a set of authors from all given files.
@@ -91,12 +93,11 @@ class MetadataProcessor(BaseProcessor):
 
         Args:
             authors_map_fname: Path to file with (author name, author email, repository) <-> (unique id) mapping.
-             Expected to be stored as JSON, where each key is a string of format "{name}[SEP]{email}[SEP]{repo}".
+             Expected to be stored as JSON Lines, where each row contains keys "name", "email", "repo", "id".
         """
-        with open(authors_map_fname, "r") as file:
-            d: Dict[str, int] = json.load(file)
-            assert all(len(key.split("[SEP]")) == 3 for key in d)
-            self._authors_repo_map = {tuple(key.split("[SEP]")): d[key] for key in d}  # type: ignore
+        with jsonlines.open(authors_map_fname, "r") as reader:
+            d: List[Dict[str, str]] = [line for line in reader]
+        self._authors_repo_map = {(author["name"], author["email"], author["repo"]): int(author["id"]) for author in d}
 
     def _get_repo_license_mapping(self, licenses_fname: str) -> None:
         """Reads repository <-> license mapping from given file.
@@ -107,6 +108,39 @@ class MetadataProcessor(BaseProcessor):
         with open(licenses_fname, "r") as file:
             self._repo_license_map = json.load(file)
 
+    def _get_history_positions(self, in_fname: str) -> None:
+        """Groups dataset by authors and aggregates position in author's history for each example.
+
+        Args:
+            in_fname: Path to input file.
+
+        Note:
+            Assumes that commits from each author are already in correct chronological order,
+            which is true for default PyDriller configuration.
+        """
+        assert self._authors_repo_map
+        data = []
+
+        if not in_fname.endswith(".jsonl") and "." not in in_fname:
+            in_fname += ".jsonl"
+        with jsonlines.open(in_fname, "r") as reader:
+            for row in tqdm(reader, desc=f"Iterating over {in_fname} to construct history"):
+                # an issue related with name disambiguation: there was a case when developer's personal account was
+                # considered the same as some bot from the same repo, so including bot authors at this points led to
+                # incorrect "pos_in_history" construction ><
+                if (row["author"][0], row["author"][1]) in self._bot_authors:
+                    continue
+                data.append(
+                    {
+                        "author": self._authors_repo_map[(row["author"][0], row["author"][1], row["repo"])],
+                        "id": int(row["id"]),
+                    }
+                )
+
+        df = pd.DataFrame(data)
+        df["pos_in_history"] = df.groupby("author").cumcount()
+        self._ids_history_position_map = {row["id"]: row["pos_in_history"] for _, row in df.iterrows()}
+
     def prepare(  # type: ignore[override]
         self,
         in_fname: str,
@@ -115,6 +149,7 @@ class MetadataProcessor(BaseProcessor):
         known_bots_fname: str,
         licenses_fname: str,
         is_ready: bool = False,
+        *args,
         **kwargs,
     ) -> None:
         if not is_ready:
@@ -122,14 +157,17 @@ class MetadataProcessor(BaseProcessor):
             self._get_bot_authors(known_bots_fname=known_bots_fname)
             self._get_authors_mapping(authors_map_fname=authors_map_fname)
             self._get_repo_license_mapping(licenses_fname=licenses_fname)
+        self._get_history_positions(in_fname=in_fname)
 
     def process(self, chunk: pd.DataFrame, **kwargs) -> pd.DataFrame:
         # add license info
         chunk["license"] = [self._repo_license_map[repo] for repo in chunk["repo"].tolist()]
         chunk["author"] = chunk["author"].apply(tuple)
         # drop examples from bot authors
-        chunk = chunk.loc[~chunk.author.isin(self._bot_authors)]
+        chunk = chunk.loc[~chunk.author.isin(self._bot_authors)].copy()
         # convert authors to ids
         chunk["temp"] = [(author[0], author[1], repo) for author, repo in zip(chunk["author"], chunk["repo"])]
         chunk["author"] = chunk["temp"].map(self._authors_repo_map)
+        # add position in author's history to each example
+        chunk["pos_in_history"] = chunk["id"].map(self._ids_history_position_map)
         return chunk.drop(columns="temp")

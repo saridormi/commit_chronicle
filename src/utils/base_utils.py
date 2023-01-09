@@ -1,4 +1,5 @@
 import logging
+from abc import ABC, abstractmethod
 from typing import List, Optional, Union
 
 import jsonlines
@@ -6,35 +7,32 @@ import pandas as pd
 from tqdm import tqdm
 
 
-class BaseManager:
+class BaseManager(ABC):
     """
     This is a base class for writing & reading data.
     """
 
+    @abstractmethod
     def prepare_outfile(self, out_fname: str, add_data_format: Optional[bool] = True) -> None:
         """
         Does what might be required before saving to chosen output format.
         (e.g. write header in case of csv files)
         """
-        raise NotImplementedError()
+        pass
 
+    @abstractmethod
     def append_to_outfile(self, data: pd.DataFrame, out_fname: str, add_data_format: Optional[bool] = True) -> None:
         """
         Appends current data chunk to chosen output format.
         """
-        raise NotImplementedError()
+        pass
 
+    @abstractmethod
     def read_input(self, in_fname: str, add_data_format: Optional[bool] = True, **kwargs):
         """
         Reads data according to chosen output format (accessing full dataset/reading in chunks).
         """
-        raise NotImplementedError()
-
-    def read_input_lazy(self, in_fname: str, add_data_format: Optional[bool] = True, **kwargs):
-        """
-        Reads data according to chosen output format (accessing full dataset in lazy fashion).
-        """
-        raise NotImplementedError()
+        pass
 
 
 class JsonlManager(BaseManager):
@@ -78,7 +76,7 @@ class JsonlManager(BaseManager):
         return pd.read_json(in_fname, orient="records", lines=True, convert_dates=False, **kwargs)
 
 
-class BaseProcessor:
+class BaseProcessor(ABC):
     """
     This is a base class for data collection and processing, which provides methods for writing & reading data and
     logging.
@@ -141,16 +139,13 @@ class BaseProcessor:
     def _read_input(
         self,
         in_fname: str,
+        add_data_format: bool = True,
         read_whole: Optional[bool] = None,
-        add_data_format: Optional[bool] = True,
-        read_lazy: Optional[bool] = None,
         **kwargs,
     ):
         """
         Reads data according to chosen output format.
         """
-        if read_lazy:
-            return self._data_manager.read_input_lazy(in_fname, add_data_format=add_data_format, **kwargs)
         return self._data_manager.read_input(
             in_fname, add_data_format=add_data_format, chunksize=None if read_whole else self._chunksize, **kwargs
         )
@@ -165,6 +160,7 @@ class BaseProcessor:
         """
         pass
 
+    @abstractmethod
     def process(self, chunk: pd.DataFrame, **kwargs) -> Union[pd.DataFrame, List[str]]:
         """
         Implements chunk processing logic.
@@ -176,7 +172,7 @@ class BaseProcessor:
         Returns:
             List of strings in cases when only one column is necessary for further processing. In other cases, `pd.DataFrame`.
         """
-        raise NotImplementedError()
+        pass
 
     def __call__(self, in_fname: str, out_fname: str, add_data_format: Optional[bool] = True, **kwargs) -> None:
         """

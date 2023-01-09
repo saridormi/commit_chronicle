@@ -156,9 +156,17 @@ def main(cfg: DictConfig) -> None:
     # -       drop clones        -
     # ----------------------------
     if cfg.post_deduplication_processor:
+        # load id mapping
+        # maps surrogate id used for clone search to real ids
+        with open(os.path.join(cfg.paths.metadata_dir, "ids_map.json"), "r") as f:
+            ids_map: Dict[int, int] = {int(value): int(key.split("[SEP]")[1]) for key, value in json.load(f).items()}
+
         for part_id, part in enumerate(parts):
             post_d_processor = PostDeduplicationProcessor(
-                **cfg.post_deduplication_processor.args, data_format=cfg.data_format, logger_name="postdedupl_processor"
+                **cfg.post_deduplication_processor.args,
+                ids_map=ids_map,
+                data_format=cfg.data_format,
+                logger_name="postdedupl_processor",
             )
 
             post_d_processor(
@@ -183,8 +191,12 @@ def main(cfg: DictConfig) -> None:
                 prepare_is_ready=True,
                 prepare_inner_part_id=part_id + 1,
                 prepare_outer_part_ids=[el + 1 for el, _ in enumerate(parts) if el != part_id],
-                prepare_diff_clones_fname=os.path.join(cfg.paths.deduplication_dir, "results_messages_80.pairs"),
-                prepare_msg_clones_fname=os.path.join(cfg.paths.deduplication_dir, "results_diffs_80.pairs"),
+                prepare_diff_clones_fname=os.path.join(
+                    cfg.paths.deduplication_dir, "results_diffs_unique_80_new.pairs"
+                ),
+                prepare_msg_clones_fname=os.path.join(
+                    cfg.paths.deduplication_dir, "results_messages_unique_80_new.pairs"
+                ),
                 prepare_only_full_inner_clones=cfg.post_deduplication_processor.only_full_inner_clones,
                 prepare_identical_clones=cfg.post_deduplication_processor.identical_clones,
                 prepare_process_inner_clones=(
