@@ -24,8 +24,10 @@ class PostDeduplicationProcessor(BaseProcessor):
         chunksize: Optional[int] = None,
         n_workers: Optional[int] = None,
         logger_name: Optional[str] = None,
+        ids_map: Optional[Dict[int, int]] = None,
     ):
         super().__init__(chunksize=chunksize, n_workers=n_workers, data_format=data_format, logger_name=logger_name)
+        self._ids_map = ids_map
         self._inner_clones_to_drop: Set[int] = set()
         self._outer_clones_to_drop: Set[int] = set()
 
@@ -225,11 +227,11 @@ class PostDeduplicationProcessor(BaseProcessor):
 
         # drop all message clones from inner part
         for group in msg_clones:
-            self._outer_clones_to_drop.update(group.get_ids_to_drop(include_root=False))
+            self._outer_clones_to_drop.update(group.get_ids_to_drop(include_root=False, ids_map=self._ids_map))
 
         # drop all diffs clones from inner part
         for group in diff_clones:
-            self._outer_clones_to_drop.update(group.get_ids_to_drop(include_root=False))
+            self._outer_clones_to_drop.update(group.get_ids_to_drop(include_root=False, ids_map=self._ids_map))
 
     def _get_inner_ids_to_drop(
         self,
@@ -253,21 +255,23 @@ class PostDeduplicationProcessor(BaseProcessor):
         if identical_clones:
             msg_clones = self._get_inner_clones_identical(msg_clones_fname, part_id=inner_part_id)
             diff_clones = self._get_inner_clones_identical(diff_clones_fname, part_id=inner_part_id)
-            full_clones = self._get_full_inner_clones_identical(msg_clones=msg_clones, diff_clones=diff_clones)
         else:
             msg_clones = self._get_inner_clones_similar(msg_clones_fname, part_id=inner_part_id)
             diff_clones = self._get_inner_clones_similar(diff_clones_fname, part_id=inner_part_id)
-            full_clones = self._get_full_inner_clones_similar(msg_clones=msg_clones, diff_clones=diff_clones)
 
         if only_full_inner_clones:
+            if identical_clones:
+                full_clones = self._get_full_inner_clones_identical(msg_clones=msg_clones, diff_clones=diff_clones)
+            else:
+                full_clones = self._get_full_inner_clones_similar(msg_clones=msg_clones, diff_clones=diff_clones)
             for group in full_clones:
-                self._inner_clones_to_drop.update(group.get_ids_to_drop())
+                self._inner_clones_to_drop.update(group.get_ids_to_drop(ids_map=self._ids_map))
         else:
             for group in msg_clones:
-                self._inner_clones_to_drop.update(group.get_ids_to_drop())
+                self._inner_clones_to_drop.update(group.get_ids_to_drop(ids_map=self._ids_map))
 
             for group in diff_clones:
-                self._inner_clones_to_drop.update(group.get_ids_to_drop())
+                self._inner_clones_to_drop.update(group.get_ids_to_drop(ids_map=self._ids_map))
 
     def clones_report(self):
         self.logger.info(f"Will drop {len(self._outer_clones_to_drop)} outer clones\n")
