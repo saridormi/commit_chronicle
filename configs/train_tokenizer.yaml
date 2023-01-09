@@ -37,5 +37,5 @@ tokenizer:
       min_frequency: 3
 
 paths:
-  input_dir: extracted_data_jsonl/lexed
+  input_dir: extracted_data_jsonl/filtered_diffs
   tokenizer_dir: tokenizer

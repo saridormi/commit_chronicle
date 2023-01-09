@@ -1,6 +1,4 @@
 from .diff_processor import DiffProcessor
-from .final_processor import MetadataProcessor
-from .lexer import Lexer
 from .message_processor import MessageProcessor
 from .metadata_processor import MetadataProcessor
 from .outliers_processor import OutliersProcessor
@@ -14,5 +12,4 @@ __all__ = [
     "PostDeduplicationProcessor",
     "MessageProcessor",
     "DiffProcessor",
-    "Lexer",
 ]
