@@ -1,4 +1,4 @@
-import json
+from collections import defaultdict
 from typing import Dict, List, Optional, Set, Tuple
 
 import jsonlines
@@ -23,6 +23,7 @@ class MetadataProcessor(BaseProcessor):
 
     def __init__(
         self,
+        ids_map: Dict[int, Tuple[int, int]],
         data_format: str,
         chunksize: Optional[int] = None,
         n_workers: Optional[int] = None,
@@ -30,11 +31,25 @@ class MetadataProcessor(BaseProcessor):
     ):
         super().__init__(chunksize=chunksize, n_workers=n_workers, data_format=data_format, logger_name=logger_name)
 
+        self._clones_ids_map: Dict[int, Tuple[int, int]] = ids_map
+        self._short_examples_to_drop: Dict[int, Set[int]] = defaultdict(set)
+
         self._authors: Set[Tuple[str, str]] = set()
         self._bot_authors: Set[Tuple[str, str]] = set()
         self._repo_license_map: Dict[str, str] = {}
+        self._repo_language_map: Dict[str, str] = {}
         self._authors_repo_map: Dict[Tuple[str, str, str], int] = {}
         self._ids_history_position_map: Dict[int, int] = {}
+
+    def _get_short_examples(self, diff_fname: str, message_fname: str):
+        for fname in [diff_fname, message_fname]:
+            self.logger.info(f"Iterating over {fname} to get ids of short examples")
+            with open(fname, "r") as f:
+                for line in f:
+                    part_idx, idx, num_tokens, num_unique_tokens = (int(i) for i in line.strip().split(",")[:4])
+                    if num_unique_tokens <= 1:
+                        part_idx, real_idx = self._clones_ids_map[idx]
+                        self._short_examples_to_drop[part_idx].add(real_idx)
 
     def _get_authors(self, in_fnames: List[str]) -> None:
         """Builds a set of authors from all given files.
@@ -99,16 +114,17 @@ class MetadataProcessor(BaseProcessor):
             d: List[Dict[str, str]] = [line for line in reader]
         self._authors_repo_map = {(author["name"], author["email"], author["repo"]): int(author["id"]) for author in d}
 
-    def _get_repo_license_mapping(self, licenses_fname: str) -> None:
-        """Reads repository <-> license mapping from given file.
+    def _get_repo_metadata(self, repos_metadata_fname: str) -> None:
+        """Reads repositories metadata from given file.
 
         Args:
-            licenses_fname: Path to file with repository <-> license mapping. Expected to be stored as JSON.
+            repos_metadata_fname: Path to file with repositories metadata (results from GitHub Search tool).
         """
-        with open(licenses_fname, "r") as file:
-            self._repo_license_map = json.load(file)
+        df = pd.read_csv(repos_metadata_fname)
+        self._repo_language_map = {row["Name"]: row["Main Language"] for _, row in df.iterrows()}
+        self._repo_license_map = {row["Name"]: row["License"] for _, row in df.iterrows()}
 
-    def _get_history_positions(self, in_fname: str) -> None:
+    def _get_history_positions(self, in_fname: str, part_id: int) -> None:
         """Groups dataset by authors and aggregates position in author's history for each example.
 
         Args:
@@ -130,6 +146,10 @@ class MetadataProcessor(BaseProcessor):
                 # incorrect "pos_in_history" construction ><
                 if (row["author"][0], row["author"][1]) in self._bot_authors:
                     continue
+
+                if row["id"] in self._short_examples_to_drop[part_id]:
+                    continue
+
                 data.append(
                     {
                         "author": self._authors_repo_map[(row["author"][0], row["author"][1], row["repo"])],
@@ -147,7 +167,10 @@ class MetadataProcessor(BaseProcessor):
         in_fnames: List[str],
         authors_map_fname: str,
         known_bots_fname: str,
-        licenses_fname: str,
+        repos_metadata_fname: str,
+        part_id: int,
+        diff_fname: str,
+        message_fname: str,
         is_ready: bool = False,
         *args,
         **kwargs,
@@ -156,11 +179,16 @@ class MetadataProcessor(BaseProcessor):
             self._get_authors(in_fnames=in_fnames)
             self._get_bot_authors(known_bots_fname=known_bots_fname)
             self._get_authors_mapping(authors_map_fname=authors_map_fname)
-            self._get_repo_license_mapping(licenses_fname=licenses_fname)
-        self._get_history_positions(in_fname=in_fname)
+            self._get_repo_metadata(repos_metadata_fname=repos_metadata_fname)
+            self._get_short_examples(diff_fname=diff_fname, message_fname=message_fname)
+        self._get_history_positions(in_fname=in_fname, part_id=part_id)
 
-    def process(self, chunk: pd.DataFrame, **kwargs) -> pd.DataFrame:
-        # add license info
+    def process(self, chunk: pd.DataFrame, part_id: int = -1, **kwargs) -> pd.DataFrame:
+        # drop short examples
+        if part_id != -1:
+            chunk = chunk.loc[~chunk["id"].isin(self._short_examples_to_drop[part_id])].copy()
+        # add metadata about repositories
+        chunk["language"] = [self._repo_language_map[repo] for repo in chunk["repo"].tolist()]
         chunk["license"] = [self._repo_license_map[repo] for repo in chunk["repo"].tolist()]
         chunk["author"] = chunk["author"].apply(tuple)
         # drop examples from bot authors

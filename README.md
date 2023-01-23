@@ -358,7 +358,6 @@ Follow these steps:
       diff_extractor:
         chunksize: ...
         n_workers: ...
-        upper_percentile: ...
         n_train_examples: ...
    
       tokenizer:
@@ -387,7 +386,6 @@ Follow these steps:
         This class is used to extract given number of diffs from train part of dataset. It accepts the following arguments:
         * `chunksize`: Number of examples in single data chunk (large files are processed in chunks) (optional, default value is 1000).
         * `n_workers`: Number of workers for data processing (optional, default value is 1 => sequential).
-        * `upper_percentile`: Percentile of diffs' lengths to use as upper bound (should be in (0, 1) range).
         * `n_train_examples`: A number of examples from train to use for tokenizer training (optional, if this key is empty or not present, all examples will be used).        
 
       * `tokenizer`:

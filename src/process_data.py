@@ -132,12 +132,14 @@ def main(cfg: DictConfig) -> None:
         # load id mapping
         # maps surrogate id used for clone search to real ids
         with open(os.path.join(cfg.paths.metadata_dir, "ids_map.json"), "r") as f:
-            ids_map: Dict[int, int] = {int(value): int(key.split("[SEP]")[1]) for key, value in json.load(f).items()}
+            clones_ids_map: Dict[int, int] = {
+                int(value): int(key.split("[SEP]")[1]) for key, value in json.load(f).items()
+            }
 
         for part_id, part in enumerate(parts):
             post_d_processor = PostDeduplicationProcessor(
                 **cfg.post_deduplication_processor.args,
-                ids_map=ids_map,
+                ids_map=clones_ids_map,
                 data_format=cfg.data_format,
                 logger_name="postdedupl_processor",
             )
@@ -147,11 +149,9 @@ def main(cfg: DictConfig) -> None:
                 out_fname=os.path.join(cfg.paths.input_dir, "filtered_diffs", f"{part}_no_duplicates"),
                 prepare_inner_part_id=part_id + 1,
                 prepare_outer_part_ids=[el + 1 for el, _ in enumerate(parts) if el != part_id],
-                prepare_diff_clones_fname=os.path.join(
-                    cfg.paths.deduplication_dir, "results_diffs_unique_80_new.pairs"
-                ),
+                prepare_diff_clones_fname=os.path.join(cfg.paths.deduplication_dir, "results_diffs_2023_80_new.pairs"),
                 prepare_msg_clones_fname=os.path.join(
-                    cfg.paths.deduplication_dir, "results_messages_unique_80_new.pairs"
+                    cfg.paths.deduplication_dir, "results_messages_2023_80_new.pairs"
                 ),
                 prepare_only_full_inner_clones=cfg.post_deduplication_processor.only_full_inner_clones,
                 prepare_identical_clones=cfg.post_deduplication_processor.identical_clones,
@@ -167,8 +167,19 @@ def main(cfg: DictConfig) -> None:
     # -  finalize metadata      -
     # ---------------------------
     if cfg.metadata_processor:
+        # load id mapping
+        # maps surrogate id used for clone search to real ids
+        with open(os.path.join(cfg.paths.metadata_dir, "ids_map.json"), "r") as f:
+            metadata_ids_map: Dict[int, Tuple[int, int]] = {
+                int(value): (int(key.split("[SEP]")[0]), int(key.split("[SEP]")[1]))
+                for key, value in json.load(f).items()
+            }
+
         metadata_processor = MetadataProcessor(
-            **cfg.metadata_processor.args, data_format=cfg.data_format, logger_name="final_processor"
+            **cfg.metadata_processor.args,
+            data_format=cfg.data_format,
+            logger_name="final_processor",
+            ids_map=metadata_ids_map,
         )
         for i, part in enumerate(parts):
             logging.info(f"Converting authors in {part}")
@@ -176,10 +187,14 @@ def main(cfg: DictConfig) -> None:
             metadata_processor(
                 in_fname=os.path.join(cfg.paths.input_dir, "filtered_diffs", f"{part}_no_duplicates"),
                 out_fname=os.path.join(cfg.paths.input_dir, "filtered_diffs", f"{part}_final"),
+                part_id=i + 1,
                 prepare_in_fnames=[os.path.join(cfg.paths.input_dir, "filtered_diffs", part) for part in parts],
                 prepare_authors_map_fname=os.path.join(cfg.paths.metadata_dir, "authors_map.jsonl"),
                 prepare_known_bots_fname=os.path.join(cfg.paths.metadata_dir, "bots.jsonl"),
-                prepare_licenses_fname=os.path.join(cfg.paths.metadata_dir, "repo_license_map.json"),
+                prepare_repos_metadata_fname=os.path.join(cfg.paths.metadata_dir, "ghs.csv"),
+                prepare_part_id=i + 1,
+                prepare_diff_fname=os.path.join(cfg.paths.deduplication_dir, "raw", "res_diff.txt"),
+                prepare_message_fname=os.path.join(cfg.paths.deduplication_dir, "raw", "res_message.txt"),
                 prepare_is_ready=i > 0,
             )
 
