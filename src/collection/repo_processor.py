@@ -140,4 +140,3 @@ class RepoProcessor:
                 cur_idx += cur_len
             except ValueError as e:
                 self.logger.error(f"[{repo_name}] Couldn't read; {e}")
-

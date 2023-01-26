@@ -6,7 +6,7 @@ This repository contains code for collecting and processing diffs, messages and 
 
 ## Table of contents
 - [Ready-to-use dataset](#ready-to-use-dataset)
-- [Requirements](#data-collection)
+- [Requirements](#requirements)
 - [Data collection](#data-collection)
 - [Data processing](#data-processing)
 - [Training tokenizer](#training-tokenizer)
