@@ -1,14 +1,20 @@
 data_format: jsonl
-n_workers: 4
-org_repo_sep: "#"
+n_workers: 16
+
+parts:
+  - train
+  - val
+  - test
 
 repo_processor:
   chunksize: 1000
 
 pydriller_kwargs:
   only_no_merge: true
+  skip_whitespaces: true
+  since: 01-01-2017
 
 paths:
   temp_clone_dir: temp
-  input_dir: repos
+  input_dir: artifacts
   output_dir: extracted_data_jsonl

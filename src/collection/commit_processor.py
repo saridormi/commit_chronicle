@@ -1,4 +1,4 @@
-from typing import Dict, Sequence, Union
+from typing import Dict, Union
 
 from pydriller import Commit, Modification
 
@@ -17,13 +17,14 @@ class CommitProcessor:
         }
 
     @staticmethod
-    def process_commit(commit: Commit) -> Dict[str, Union[Sequence[str], str]]:
+    def process_commit(commit: Commit) -> Dict[str, Union[Dict[str, str], str]]:
         """
         Extracts specific information about commit.
         """
         res = {
             "author": (commit.author.name, commit.author.email),
             "date": commit.author_date.strftime("%d.%m.%Y %H:%M:%S"),
+            "timezone": commit.author_timezone,
             "hash": commit.hash,
             "message": commit.msg,
             "mods": [],

@@ -46,6 +46,5 @@ metadata_processor:
 paths:
   input_dir: extracted_data_jsonl
   stats_percentile_dir: n_tokens
-  literals_percentile_dir: lexeme_len
   deduplication_dir: deduplication
   metadata_dir: metadata

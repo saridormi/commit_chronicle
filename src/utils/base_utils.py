@@ -1,6 +1,6 @@
 import logging
 from abc import ABC, abstractmethod
-from typing import List, Optional, Union
+from typing import Dict, List, Optional, Union
 
 import jsonlines
 import pandas as pd
@@ -21,7 +21,9 @@ class BaseManager(ABC):
         pass
 
     @abstractmethod
-    def append_to_outfile(self, data: pd.DataFrame, out_fname: str, add_data_format: Optional[bool] = True) -> None:
+    def append_to_outfile(
+        self, data: Union[pd.DataFrame, List[Dict], List[str]], out_fname: str, add_data_format: Optional[bool] = True
+    ) -> None:
         """
         Appends current data chunk to chosen output format.
         """
@@ -51,14 +53,23 @@ class JsonlManager(BaseManager):
 
     def append_to_outfile(
         self,
-        data: pd.DataFrame,
+        data: Union[pd.DataFrame, List[Dict], List[str]],
         out_fname: str,
         add_data_format: Optional[bool] = True,
     ) -> None:
         """
         Appends current data chunk.
         """
-        data = data.to_dict(orient="records")
+        if isinstance(data, pd.DataFrame):
+            data = data.to_dict(orient="records")
+        if isinstance(data, list) and all(isinstance(d, dict) for d in data):
+            pass
+        elif isinstance(data, list) and all(isinstance(d, str) for d in data):
+            pass
+        else:
+            raise ValueError(
+                "Unknown data format: expected either pd.DataFrame, list of dictionaries or list of strings."
+            )
 
         if add_data_format:
             out_fname = f"{out_fname}.jsonl"
@@ -74,6 +85,22 @@ class JsonlManager(BaseManager):
             in_fname = f"{in_fname}.jsonl"
 
         return pd.read_json(in_fname, orient="records", lines=True, convert_dates=False, **kwargs)
+
+
+def get_logger(logger_name):
+    """
+    Workaround for logging with joblib (based on https://github.com/joblib/joblib/issues/1017)
+    """
+    logger = logging.getLogger(logger_name)
+    if len(logger.handlers) == 0:
+        logger.setLevel(logging.INFO)
+        sh = logging.StreamHandler()
+        sh.setFormatter(logging.Formatter("%(asctime)s %(levelname)-8s %(message)s"))
+        fh = logging.FileHandler(f"{logger_name}.log", mode="a")
+        fh.setFormatter(logging.Formatter("%(asctime)s %(levelname)-8s %(message)s"))
+        logger.addHandler(sh)
+        logger.addHandler(fh)
+    return logger
 
 
 class BaseProcessor(ABC):
@@ -97,23 +124,11 @@ class BaseProcessor(ABC):
         if data_format == "jsonl":
             self._data_manager = JsonlManager()
         else:
-            raise NotImplementedError("Current data format is not supported")
+            raise NotImplementedError("Passed data format is not supported")
 
     @property
     def logger(self):
-        """
-        Workaround for logging with joblib (based on https://github.com/joblib/joblib/issues/1017)
-        """
-        logger = logging.getLogger(self._logger_name)
-        if len(logger.handlers) == 0:
-            logger.setLevel(logging.INFO)
-            sh = logging.StreamHandler()
-            sh.setFormatter(logging.Formatter("%(asctime)s %(levelname)-8s %(message)s"))
-            fh = logging.FileHandler(f"{self._logger_name}.log", mode="a")
-            fh.setFormatter(logging.Formatter("%(asctime)s %(levelname)-8s %(message)s"))
-            logger.addHandler(sh)
-            logger.addHandler(fh)
-        return logger
+        return get_logger(self._logger_name)
 
     def _prepare_outfile(self, out_fname: str, add_data_format: Optional[bool] = True) -> None:
         """
@@ -123,18 +138,14 @@ class BaseProcessor(ABC):
 
     def _append_to_outfile(
         self,
-        data: Union[pd.DataFrame, List[str]],
+        data: Union[pd.DataFrame, List[Dict], List[str]],
         out_fname: str,
         add_data_format: Optional[bool] = True,
     ) -> None:
         """
         Appends current data chunk to chosen output format.
         """
-        if isinstance(data, pd.DataFrame):
-            self._data_manager.append_to_outfile(data, out_fname, add_data_format=add_data_format)
-        else:
-            with open(out_fname, mode="a") as f:
-                f.writelines(data)
+        self._data_manager.append_to_outfile(data, out_fname, add_data_format=add_data_format)
 
     def _read_input(
         self,

@@ -6,6 +6,7 @@ This repository contains code for collecting and processing diffs, messages and 
 
 ## Table of contents
 - [Ready-to-use dataset](#ready-to-use-dataset)
+- [Requirements](#data-collection)
 - [Data collection](#data-collection)
 - [Data processing](#data-processing)
 - [Training tokenizer](#training-tokenizer)
@@ -14,26 +15,27 @@ This repository contains code for collecting and processing diffs, messages and 
 
 > :star2: work in progress: this section will contain a link to access a multilingual commits dataset
 
+## Requirements
+
+* :snake: Python
+* :floppy_disk: Dependencies
+  * This project provides dependencies for two Python dependency managers:
+    * [Poetry](https://python-poetry.org/): [`poetry.lock`](poetry.lock), [`pyproject.toml`](pyproject.toml)
+    * [pip](https://pip.pypa.io/en/stable/): [`requirements.txt`](requirements.txt) (obtained through `poetry export`)
+
 ## Data collection
 
 ### How to use
 
 Follow these steps:
 
-1. **Clone repo**
-    ```
-    git clone https://github.com/saridormi/commits_dataset.git
-    ```
+1. **Provide repos to collect data from**
 
-2. **Install dependencies**
+    We used [GitHub Search](https://arxiv.org/abs/2103.04682) to select repositories that meet several criteria
+    and queried GitHub API for additional info like `full_name` property. 
 
-   ```
-   pip install -r requirements.txt
-   ``` 
-
-3. **Provide repos to collect data from**
-
-    We used [GitHub Search](https://arxiv.org/abs/2103.04682) to select repositories that meet several criteria *(you can look through [`choosing_repos.ipynb`](notebooks/choosing_repos.ipynb) for more information on our specific criteria)*.
+    You can look through [`choosing_repos.ipynb`](notebooks/choosing_repos.ipynb)
+    for an overview of the whole process and some statistics on repositories used for our dataset.
 
     <details>
     <summary>:yellow_heart: click here for more information about expected data format</summary>
@@ -42,36 +44,32 @@ Follow these steps:
     > 
     > It doesn't matter for collection script, but having part called `train` is **necessary for correct work of processing script**.
    
-    The script expects data to be stored in the following way:
+    The script expects repositories for each part to be stored in separate JSONLines file:
 
    ```
          ├── ...  # data directory
-         │   ├── part_1
-         │   │    ├── repo_1.json
-         │   │    ├── ...
-         │   │    └── repo_n.json
+         │   ├── part_1.jsonl
          │   ├── ...
-         │   └── part_k
+         │   └── part_k.jsonl
          └── ...
    ```
-
-   Information about each repo is stored in its own json file and should include the following keys:
-   - `"repo"`: full repository name
-   - `"url"`: repository URL
-   - `"hashes"`: hashes of specific commits; only these commits are collected
    
+   Each file should have the following keys:
+   - `"name"`: repository name
+   - `"github_url"`: repository URL
+
    An example:
 
    ```
       {
-       'repo': 'saridormi/commits_dataset',
-       'url': 'https://github.com/saridormi/commits_dataset.git',
-       'hashes': ['a7fb3b64184f0af5b08285cce14b9139baa94049']
+       "name": "saridormi/commits_dataset",
+       "github_url": "git://github.com/saridormi/commits_dataset.git",
+        ...  # all other keys are not necessary
       }
    ```
    </details>
 
-5. **Define configuration**
+2. **Define configuration**
 
       Configuration is defined at [`configs/collect_data.yaml`](configs/collect_data.yaml).
 
@@ -82,8 +80,9 @@ Follow these steps:
 
       ```
       data_format: ...
-      n_workers: ...
-      org_repo_sep: ...
+      n_workers: ...   
+      
+      parts: ...
    
       repo_processor:
          chunksize: ...
@@ -97,17 +96,18 @@ Follow these steps:
           output_dir: ...
       ```
 
-      * `data_format`: format to use for reading & writing data; currently, only `jsonl` is supported
-      * `n_workers`: # of threads for data collection
-      * `org_repo_sep`: smth to replace `/` in `"org/repo"`      
-
+      * `data_format`: String, format to use for reading & writing data; currently, only `jsonl` is supported.
+      * `n_workers`: Number of workers for data processing (optional, default value is 1 => sequential).
+      * `parts`: List of strings, dataset parts.
       * `repo_processor`
-        * `chunksize`: # of examples in single data chunk (large files are processed in chunks)
+        * `chunksize`: Number of examples in single data chunk (large files are processed in chunks) (optional, default value is 1000).
 
       * `pydriller_kwargs`:
       
         All keyword arguments under this key are passed to PyDriller's `RepositoryMining`. 
       See [PyDriller documentation](https://pydriller.readthedocs.io/en/1.15/reference.html#pydriller.repository_mining.RepositoryMining) for more information.
+      
+        If you want to provide date-related arguments (`since`, `to`), write them in `%d-%m-%Y` format. 
       
       * `paths`:
       
@@ -117,7 +117,7 @@ Follow these steps:
         * `output_dir`: directory to save gathered data to
         </details>
 
-6. **Collect data**
+3. **Collect data**
 
     To start collecting data, run the following command:
     ```
@@ -176,7 +176,7 @@ Follow these steps:
       └── ...
    ```
 
-   At the end commits from each part are united to single files, so folder structure looks like this:
+   At the end commits from each part are united to single file, so folder structure looks like this:
    ```
       ├── ...  # output folder
       │   ├── part_1.jsonl
@@ -190,24 +190,17 @@ Follow these steps:
 
 ## Data processing
 
+### Stages
+
+> :star2: work in progress: this section will contain a more detailed description of processing stages
+
 ### How to use
 
-> :star2: Start from step 4 if you've used the script for data collection.
+> :star2: Start from step 2 if you've used the script for data collection.
 
 Follow these steps:
 
-1. **Clone repo**
-    ```
-    git clone https://github.com/saridormi/commits_dataset.git
-    ```
-
-2. **Install dependencies**
-
-   ```
-   pip install -r requirements.txt
-   ```
-
-3. **Provide data**
+1. **Provide data**
 
     > :exclamation: Several processing stages treat `train` part different from others,
     so having part called `train` is necessary for correct work of processing script.
@@ -215,7 +208,7 @@ Follow these steps:
     Processing script expects input data to be stored in the same format collection script saves it. See all the details above,
     at [data format](#data-format) section.
 
-4. **Define configuration**
+2. **Define configuration**
 
     Configuration is defined at [`configs/process_data.yaml`](configs/process_data.yaml).
 
@@ -257,7 +250,7 @@ Follow these steps:
    
       paths:
          input_dir: ...
-         tokens_percentile_dir: ...
+         stats_percentile_dir: ...
          deduplication_dir: ...
          metadata_dir: ...
       ```
@@ -269,7 +262,7 @@ Follow these steps:
       
         Paths are moved to separate key to convert them all to absolute paths via hydra.
         * `input_dir`: Directory to read data from.
-        * `tokens_percentile_dir`: Directory to save percentiles for # tokens.
+        * `stats_percentile_dir`: Directory to save percentiles for # tokens, # characters, # modified files (outliers processing).
         * `deduplication_dir`: Directory to save clone search results.
         * `metadata_dir`: Directory to read/save metadata about authors, licenses, etc.
 
@@ -291,7 +284,7 @@ Follow these steps:
         * `identical_clones`: True to use logic for 100% clones, False to use logic for similar clones.
    </details>
     
-5. **Process data**
+3. **Process data**
 
     To start processing data, run the following command:
 
@@ -302,13 +295,9 @@ Follow these steps:
     > :star2: Note that you can skip any processing stage by setting corresponding config key to `False`. 
     For example, here is how you can skip deduplication stage with [hydra's override syntax](https://hydra.cc/docs/advanced/override_grammar/basic/):
     > ```
-    >  python -m src.process_data post_deduplication_processing=False
+    >  python -m src.process_data post_deduplication_processor=False
     >  ```
-
-### Stages
-
-> :star2: work in progress: this section will contain a more detailed description of processing stages
-
+   
 ## Training tokenizer
 
 This repo also contains code for training tokenizer on diffs from collected data
@@ -319,29 +308,18 @@ or define all components from [🤗Tokenizers](https://huggingface.co/tokenizers
 
 ### How to use
 
-> :star2: Start from step 4 if you've used the script for data collection and/or processing.
+> :star2: Start from step 2 if you've used the script for data collection and/or processing.
 
 Follow these steps:
 
-1. **Clone repo**
-    ```
-    git clone https://github.com/saridormi/commits_dataset.git
-    ```
-
-2. **Install dependencies**
-
-   ```
-   pip install -r requirements.txt
-   ```
-
-3. **Provide data**
+1. **Provide data**
 
     > :exclamation: Having part called `train` is necessary for correct work of tokenizer training script.
 
     Tokenizer training script expects input data to be stored in the same format collection script saves it. See all the details above,
     at [data format](#data-format) section.
 
-4. **Define configuration**
+2. **Define configuration**
 
    Configuration is defined at [`configs/train_tokenizer.yaml`](configs/train_tokenizer.yaml).   
 
@@ -358,7 +336,6 @@ Follow these steps:
       diff_extractor:
         chunksize: ...
         n_workers: ...
-        n_train_examples: ...
    
       tokenizer:
          configuration: ...
@@ -386,7 +363,6 @@ Follow these steps:
         This class is used to extract given number of diffs from train part of dataset. It accepts the following arguments:
         * `chunksize`: Number of examples in single data chunk (large files are processed in chunks) (optional, default value is 1000).
         * `n_workers`: Number of workers for data processing (optional, default value is 1 => sequential).
-        * `n_train_examples`: A number of examples from train to use for tokenizer training (optional, if this key is empty or not present, all examples will be used).        
 
       * `tokenizer`:
         * `configuration`: Tokenizer configuration to use. Currently, `byte_level` and `custom` are supported.
@@ -406,7 +382,7 @@ Follow these steps:
           * `tokenizer_dir`: Directory to save tokenizer to.
    </details>
 
-6. **Train tokenizer**
+3. **Train tokenizer**
 
     To start training tokenizer, run the following command:
 
