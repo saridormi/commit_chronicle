@@ -1,3 +1,4 @@
+import os
 from collections import defaultdict
 from typing import Dict, List, Optional, Set, Tuple
 
@@ -12,7 +13,7 @@ class MetadataProcessor(BaseProcessor):
     """This class is used to finalize metadata about each example that we want to include in public dataset.
 
     It converts authors' personal information into ids, drops bot authors
-    and adds info about license type to each example.
+    and adds info about license and programming language to each example.
 
     Args:
         data_format: In which format mined data is saved.
@@ -23,7 +24,7 @@ class MetadataProcessor(BaseProcessor):
 
     def __init__(
         self,
-        ids_map: Dict[int, Tuple[int, int]],
+        ids_to_commits_map: Dict[int, Dict[str, str]],
         data_format: str,
         chunksize: Optional[int] = None,
         n_workers: Optional[int] = None,
@@ -31,40 +32,58 @@ class MetadataProcessor(BaseProcessor):
     ):
         super().__init__(chunksize=chunksize, n_workers=n_workers, data_format=data_format, logger_name=logger_name)
 
-        self._clones_ids_map: Dict[int, Tuple[int, int]] = ids_map
-        self._short_examples_to_drop: Dict[int, Set[int]] = defaultdict(set)
+        self._ids_to_commits_map: Dict[int, Dict[str, str]] = ids_to_commits_map
+        self._short_examples_to_drop: Dict[str, Set[str]] = defaultdict(set)
 
-        self._authors: Set[Tuple[str, str]] = set()
+        self._authors: Dict[str, Set[Tuple[str, str]]] = defaultdict(set)
+        self._train_authors_to_drop: Set[Tuple[str, str]] = set()
         self._bot_authors: Set[Tuple[str, str]] = set()
         self._repo_license_map: Dict[str, str] = {}
         self._repo_language_map: Dict[str, str] = {}
         self._authors_repo_map: Dict[Tuple[str, str, str], int] = {}
-        self._ids_history_position_map: Dict[int, int] = {}
 
-    def _get_short_examples(self, diff_fname: str, message_fname: str):
+    def _get_short_examples(self, diff_fname: str, message_fname: str) -> None:
+        """
+        Builds a set of extremely short examples (<= 1 unique token).
+
+        SourcererCC can't process these examples, and we don't want them present in a dataset.
+
+        Args:
+            diff_fname: Path to diffs file for SourcererCC.
+            message_fname: Path to messages file for SourcererCC.
+        """
         for fname in [diff_fname, message_fname]:
             self.logger.info(f"Iterating over {fname} to get ids of short examples")
             with open(fname, "r") as f:
                 for line in f:
                     part_idx, idx, num_tokens, num_unique_tokens = (int(i) for i in line.strip().split(",")[:4])
                     if num_unique_tokens <= 1:
-                        part_idx, real_idx = self._clones_ids_map[idx]
-                        self._short_examples_to_drop[part_idx].add(real_idx)
+                        commit: Dict[str, str] = self._ids_to_commits_map[idx]
+                        self._short_examples_to_drop[commit["repo"]].add(commit["hash"])
 
-    def _get_authors(self, in_fnames: List[str]) -> None:
+    def _get_authors(self, input_dir: str, parts: List[str]) -> None:
         """Builds a set of authors from all given files.
 
         Args:
-            in_fnames: List with paths to all dataset parts.
+            input_dirs: List with paths to all dataset parts.
         """
-        for fname in in_fnames:
-            reader = self._read_input(fname)
-            for chunk in tqdm(reader, desc=f"Reading authors from {fname}", leave=False):
-                authors: List[List[str]] = chunk["author"].tolist()
-                assert all(len(author) == 2 for author in authors)
-                self._authors.update(tuple(author) for author in authors)  # type: ignore
+        for part in parts:
+            repos = sorted(os.listdir(os.path.join(input_dir, part)))
+            for repo in tqdm(repos, desc=f"Reading authors from {part}"):
+                reader = self._data_manager.read_input(
+                    os.path.join(input_dir, repo, f"commits.{self.data_format}.gz"),
+                    compression="gzip",
+                    add_data_format=False,
+                    chunksize=self._chunksize,
+                )
+
+                for chunk in tqdm(reader, desc=f"Reading authors from {repo}", leave=False):
+                    authors: List[List[str]] = chunk["author"].tolist()
+                    assert all(len(author) == 2 for author in authors)
+                    self._authors[part].update(tuple(author) for author in authors)  # type: ignore
 
         self.logger.info(f"Total number of authors: {len(self._authors)}")
+        self._train_authors_to_drop = self._authors["train"] & (self._authors["test"] | self._authors["val"])
 
     def _get_bot_authors(self, known_bots_fname: str) -> None:
         """Aggregates ids of bot authors. Two approaches to detect bots are used:
@@ -104,7 +123,8 @@ class MetadataProcessor(BaseProcessor):
         self._bot_authors = set((row["name"], row["email"]) for _, row in bot_authors.iterrows())
 
     def _get_authors_mapping(self, authors_map_fname: str) -> None:
-        """Reads (author name, author email, repository) <-> (unique id) mapping from given file.
+        """Reads (author name, author email, repository) <-> (unique id) mapping from given file
+        (in our case, it was obtained by name disambiguation).
 
         Args:
             authors_map_fname: Path to file with (author name, author email, repository) <-> (unique id) mapping.
@@ -120,82 +140,53 @@ class MetadataProcessor(BaseProcessor):
         Args:
             repos_metadata_fname: Path to file with repositories metadata (results from GitHub Search tool).
         """
-        df = pd.read_csv(repos_metadata_fname)
-        self._repo_language_map = {row["Name"]: row["Main Language"] for _, row in df.iterrows()}
-        self._repo_license_map = {row["Name"]: row["License"] for _, row in df.iterrows()}
+        df = pd.read_json(repos_metadata_fname, orient="records", lines=True)
+        self._repo_language_map = {row["name"]: row["mainLanguage"] for _, row in df.iterrows()}
+        self._repo_license_map = {row["name"]: row["license"] for _, row in df.iterrows()}
 
-    def _get_history_positions(self, in_fname: str, part_id: int) -> None:
-        """Groups dataset by authors and aggregates position in author's history for each example.
-
-        Args:
-            in_fname: Path to input file.
-
-        Note:
-            Assumes that commits from each author are already in correct chronological order,
-            which is true for default PyDriller configuration.
-        """
-        assert self._authors_repo_map
-        data = []
-
-        if not in_fname.endswith(".jsonl") and "." not in in_fname:
-            in_fname += ".jsonl"
-        with jsonlines.open(in_fname, "r") as reader:
-            for row in tqdm(reader, desc=f"Iterating over {in_fname} to construct history"):
-                # an issue related with name disambiguation: there was a case when developer's personal account was
-                # considered the same as some bot from the same repo, so including bot authors at this points led to
-                # incorrect "pos_in_history" construction ><
-                if (row["author"][0], row["author"][1]) in self._bot_authors:
-                    continue
-
-                if row["id"] in self._short_examples_to_drop[part_id]:
-                    continue
-
-                data.append(
-                    {
-                        "author": self._authors_repo_map[(row["author"][0], row["author"][1], row["repo"])],
-                        "id": int(row["id"]),
-                    }
-                )
-
-        df = pd.DataFrame(data)
-        df["pos_in_history"] = df.groupby("author").cumcount()
-        self._ids_history_position_map = {row["id"]: row["pos_in_history"] for _, row in df.iterrows()}
-
-    def prepare(  # type: ignore[override]
+    def prepare(
         self,
-        in_fname: str,
-        in_fnames: List[str],
+        input_dir: str,
+        parts: List[str],
         authors_map_fname: str,
         known_bots_fname: str,
         repos_metadata_fname: str,
-        part_id: int,
         diff_fname: str,
         message_fname: str,
-        is_ready: bool = False,
-        *args,
-        **kwargs,
     ) -> None:
-        if not is_ready:
-            self._get_authors(in_fnames=in_fnames)
-            self._get_bot_authors(known_bots_fname=known_bots_fname)
-            self._get_authors_mapping(authors_map_fname=authors_map_fname)
-            self._get_repo_metadata(repos_metadata_fname=repos_metadata_fname)
-            self._get_short_examples(diff_fname=diff_fname, message_fname=message_fname)
-        self._get_history_positions(in_fname=in_fname, part_id=part_id)
+        """
+        Runs all necessary preprocessing to drop examples later.
 
-    def process(self, chunk: pd.DataFrame, part_id: int = -1, **kwargs) -> pd.DataFrame:
+        Args:
+            input_dir: Path to root input directory with data.
+            parts: List of dataset parts' names.
+            authors_map_fname: Path to file with author <-> unique id mapping.
+            known_bots_fname: Path to file with combination of open bots datasets.
+            repos_metadata_fname: Path to file with repositories metadata.
+            diff_fname: Path to diffs file for SourcererCC.
+            message_fname: Path to messages file for SourcererCC.
+        """
+        self._get_authors(input_dir=input_dir, parts=parts)
+        self._get_bot_authors(known_bots_fname=known_bots_fname)
+        self._get_authors_mapping(authors_map_fname=authors_map_fname)
+        self._get_repo_metadata(repos_metadata_fname=repos_metadata_fname)
+        self._get_short_examples(diff_fname=diff_fname, message_fname=message_fname)
+
+    def _process_chunk(self, chunk: pd.DataFrame, repo: str, part_id: int = -1, **kwargs) -> pd.DataFrame:
+        if part_id == -1:
+            raise ValueError("Please, pass correct part_id")
         # drop short examples
-        if part_id != -1:
-            chunk = chunk.loc[~chunk["id"].isin(self._short_examples_to_drop[part_id])].copy()
+        chunk = chunk.loc[[cur_hash not in self._short_examples_to_drop[repo] for cur_hash in chunk.hash]].copy()
         # add metadata about repositories
         chunk["language"] = [self._repo_language_map[repo] for repo in chunk["repo"].tolist()]
         chunk["license"] = [self._repo_license_map[repo] for repo in chunk["repo"].tolist()]
-        chunk["author"] = chunk["author"].apply(tuple)
         # drop examples from bot authors
+        chunk["author"] = chunk["author"].apply(tuple)
         chunk = chunk.loc[~chunk.author.isin(self._bot_authors)].copy()
         # convert authors to ids
-        chunk["temp"] = [(author[0], author[1], repo) for author, repo in zip(chunk["author"], chunk["repo"])]
-        chunk["author"] = chunk["temp"].map(self._authors_repo_map)
-        # add position in author's history to each example
-        chunk["pos_in_history"] = chunk["id"].map(self._ids_history_position_map)
-        return chunk.drop(columns="temp")
+        chunk["author"] = [
+            self._authors_repo_map[(row["author"][0], row["author"][1], row["repo"])]
+            for _, row in chunk[["author", "repo"]].iterrows()
+        ]
+        chunk = chunk.loc[~chunk.author.isin(self._train_authors_to_drop)].copy()
+        return chunk

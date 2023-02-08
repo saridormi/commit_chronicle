@@ -26,10 +26,9 @@ def main(cfg: DictConfig) -> None:
     # -----------------------------
     if "extract" not in cfg or cfg.extract:
         extractor = DiffExtractor(**cfg.diff_extractor, data_format=cfg.data_format)
-        extractor.extract_diffs(
-            in_fname=os.path.join(cfg.paths.input_dir, "train_final"),
+        extractor(
+            input_dir=os.path.join(cfg.paths.input_dir),
             out_fname=os.path.join(cfg.paths.tokenizer_dir, "diffs.txt"),
-            n_examples=cfg.diff_extractor.n_train_examples if "n_train_examples" in cfg.diff_extractor else None,
             line_sep=cfg.line_sep,
         )
 

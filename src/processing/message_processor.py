@@ -3,7 +3,6 @@ from string import punctuation
 from typing import Dict
 
 import pandas as pd
-from joblib import Parallel, delayed
 
 from ..utils import BaseProcessor
 
@@ -43,22 +42,62 @@ class MessageProcessor(BaseProcessor):
 
     @staticmethod
     def _remove_emails(message: str, replace_pattern: str = "") -> str:
+        """
+        Removes emails from given string via regexes.
+
+        Args:
+            message: Input string, assumed to be commit message.
+            replace_pattern: What pattern will emails get replaced with.
+
+        Returns:
+            String with emails either removed or replaced with given pattern.
+        """
         email_pattern = r"\w[\w.\-+]*?@[\w.\-]+?\.[\w.\-]+?"
         email_pattern = r"[\[\({<]?" + email_pattern + r"[\]\)}>]?"
         return MessageProcessor._remove_pattern_generic(message, email_pattern, replace_pattern)
 
     @staticmethod
     def _remove_urls(message: str, replace_pattern: str = "") -> str:
+        """
+        Removes urls from given string via regexes.
+
+        Args:
+            message: Input string, assumed to be commit message.
+            replace_pattern: What pattern will urls get replaced with.
+
+        Returns:
+            String with urls either removed or replaced with given pattern.
+        """
         url_pattern = r"https?://[-a-zA-Z0-9@:%._+~#?=/&]+?"
         return MessageProcessor._remove_pattern_generic(message, url_pattern, replace_pattern)
 
     @staticmethod
     def _remove_at_pattern(message: str, replace_pattern: str = "") -> str:
+        """
+        Removes @smth pattern from given string via regexes.
+
+        Args:
+            message: Input string, assumed to be commit message.
+            replace_pattern: What pattern will at pattern get replaced with.
+
+        Returns:
+            String with at pattern either removed or replaced with given pattern.
+        """
         at_pattern = r"@\S+?"
         return MessageProcessor._remove_pattern_generic(message, at_pattern, replace_pattern)
 
     @staticmethod
     def _remove_sha(message: str, replace_pattern: str = "") -> str:
+        """
+        Removes hashes from given string via regexes.
+
+        Args:
+            message: Input string, assumed to be commit message.
+            replace_pattern: What pattern will hashes get replaced with.
+
+        Returns:
+            String with hashes either removed or replaced with given pattern.
+        """
         x = message
         # trying to avoid false positives - the SHA pattern unfortunately matches these kinds of dates
         if re.search(r"\d\d\d\d-\d\d-\d\d", x) or re.search(r"\d\d-\d\d-\d\d\d\d", x):
@@ -71,11 +110,19 @@ class MessageProcessor(BaseProcessor):
     @staticmethod
     def _remove_issue_ref(message: str, replace_pattern: str = "") -> str:
         """
-        Deletes issue numbers from the following patterns:
-        * #123
-        * GH-123
-        * gh-123
-        * ANYTHING-123 (Jira project id)
+        Deletes issue numbers, including the following patterns:
+         * #123
+         * GH-123
+         * gh-123
+         * ANYTHING-123 (Jira project id)
+        Also works with all kinds of brackets: ()<>[]{}.
+
+        Args:
+            message: Input string, assumed to be commit message.
+            replace_pattern: What pattern will issue numbers get replaced with.
+
+        Returns:
+            String with issue numbers either removed or replaced with given pattern.
         """
         x = message
         for pattern in [r"#\d+", r"GH-\d+", r"gh-\d+", r"[A-Z]\w+-\d+"]:
@@ -154,6 +201,17 @@ class MessageProcessor(BaseProcessor):
 
     @staticmethod
     def _filter_trivial_or_bot(message: str) -> bool:
+        """
+        Filters trivial/bot messages, which includes:
+         * patterns from "Neural-machine-translation-based commit message generation: how far are we?"
+         * pattern that includes other filenames in `update smth.smth` structure
+
+        Args:
+            message: Input string, assumed to be commit message.
+
+        Returns:
+            True if message is considered trivial/bot, False otherwise.
+        """
         message = message.strip()
         # pad punctuation with spaces - expected format in given regular expressions
         message = message.translate(str.maketrans({key: " {0} ".format(key) for key in punctuation}))  # type: ignore
@@ -181,14 +239,49 @@ class MessageProcessor(BaseProcessor):
 
     @staticmethod
     def _filter_merge(message: str) -> bool:
+        """
+        Filters all commits messages that start from Merge.
+
+        It is a common approach for filtering merge commits.
+
+        Args:
+            message: Input string, assumed to be commit message.
+
+        Returns:
+            True if message is considered merge commit, False otherwise.
+        """
         return message.startswith("Merge")
 
     @staticmethod
     def _filter_revert(message: str) -> bool:
+        """
+        Filters all commits messages that start from Revert.
+
+        It is a common approach for filtering revert commits.
+
+        Args:
+            message: Input string, assumed to be commit message.
+
+        Returns:
+            True if message is considered revert commit, False otherwise.
+        """
         return message.startswith("Revert")
 
     @staticmethod
     def _filter_squash(message: str, line_sep: str) -> bool:
+        """
+        Filters all commits messages that are considered squashed.
+
+        Includes two checks:
+         * all lines start from `*`
+         * all lines except the first start with `*` (common for squashed PRs commits)
+
+        Args:
+            message: Input string, assumed to be commit message.
+
+        Returns:
+            True if message is considered squashed commit, False otherwise.
+        """
         message_lines = message.split(line_sep)
         if len(message_lines) == 1:
             return False
@@ -203,6 +296,16 @@ class MessageProcessor(BaseProcessor):
 
     @staticmethod
     def _filter(message: str, line_sep: str) -> bool:
+        """
+        Run all supported filters on given string.
+
+        Args:
+            message: Input string, assumed to be commit message.
+            line_sep: Newline separator in message.
+
+        Returns:
+          True if message was considered irrelevant by one of the filters, False otherwise.
+        """
         # filter strange errors
         if not isinstance(message, str):
             return True
@@ -235,6 +338,16 @@ class MessageProcessor(BaseProcessor):
 
     @staticmethod
     def _remove_all_patterns(line: str, replace_patterns: bool) -> str:
+        """
+        Process all supported patterns from given string via regexes.
+
+        Args:
+            line: Input string, assumed to be a single line from commits message.
+            replace_patterns: True to replace patterns with special tokens, False to just remove them.
+
+        Returns:
+            Processed string.
+        """
         if not replace_patterns:
             line = MessageProcessor._remove_emails(line)
             line = MessageProcessor._remove_urls(line)
@@ -257,6 +370,20 @@ class MessageProcessor(BaseProcessor):
 
     @staticmethod
     def _process(message: str, replace_patterns: bool, line_sep: str) -> str:
+        """
+        Processes single commit message. It includes the following:
+          * filter irrelevant messages (replace them with empty string, they will get dropped in `_process_chunk` method)
+          * remove a variety of patterns in messages (or replace them with special tokens)
+          * replaces newline character with given `line_sep`
+
+        Args:
+            message: Input commit message.
+            replace_patterns: True to replace patterns with special tokens, False to just remove them.
+            line_sep: Newline separator that should be used in resulting message.
+
+        Returns:
+            Processed message.
+        """
         if MessageProcessor._filter(message, "\n"):
             return ""
 
@@ -271,12 +398,10 @@ class MessageProcessor(BaseProcessor):
 
         return message
 
-    def process(self, chunk: pd.DataFrame, line_sep: str, replace_patterns: bool, **kwargs) -> pd.DataFrame:  # type: ignore[override]
-        with Parallel(self._n_workers) as pool:
-            filtered_messages = pool(
-                delayed(MessageProcessor._process)(message, line_sep=line_sep, replace_patterns=replace_patterns)
-                for _, message in chunk["message"].items()
-            )
-
+    def _process_chunk(self, chunk: pd.DataFrame, line_sep: str = "\n", replace_patterns: bool = False, **kwargs) -> pd.DataFrame:  # type: ignore[override]
+        filtered_messages = [
+            MessageProcessor._process(cur_message, line_sep=line_sep, replace_patterns=replace_patterns)
+            for cur_message in chunk.message
+        ]
         chunk["message"] = filtered_messages
         return chunk.loc[chunk.message.str.len() > 0]

@@ -86,6 +86,7 @@ Follow these steps:
    
       repo_processor:
          chunksize: ...
+         max_lines: ...
    
       pydriller_kwargs:
         ...
@@ -101,7 +102,7 @@ Follow these steps:
       * `parts`: List of strings, dataset parts.
       * `repo_processor`
         * `chunksize`: Number of examples in single data chunk (large files are processed in chunks) (optional, default value is 1000).
-
+        * `max_lines`: Optional argument, when provided, defines the maximum amount of changed lines in a single commit.
       * `pydriller_kwargs`:
       
         All keyword arguments under this key are passed to PyDriller's `RepositoryMining`. 
@@ -163,29 +164,21 @@ Follow these steps:
    }
    ```
 
-   First, commits from each repo are saved to its own file and zipped, so folder structure looks like this:
+   Commits from each repo are saved to its own file and zipped, so folder structure looks like this:
  
    ```
       ├── ...  # output folder
       │   ├── part_1
-      │   │    ├── repo_1.jsonl.gz
-      │   │    ├── ...
-      │   │    └── repo_n.jsonl.gz
+      │   │   ├── repo_1
+      │   │   │   ├── commits.jsonl.gz
+      │   │   ├── ...
+      │   │   └── repo_n
+      │   │       ├── commits.jsonl.gz
       │   ├── ...
       │   └── part_k
       └── ...
    ```
 
-   At the end commits from each part are united to single file, so folder structure looks like this:
-   ```
-      ├── ...  # output folder
-      │   ├── part_1.jsonl
-      │   ├── ...
-      │   └── part_k.jsonl
-      └── ...
-   ```
-
-   Currently, script doesn't remove the former version, you should do it manually if you don't need raw data.
 </details>
 
 ## Data processing

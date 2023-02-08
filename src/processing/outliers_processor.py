@@ -1,7 +1,8 @@
+import gzip
 import json
 import os
 from collections import defaultdict
-from typing import Dict, List, Optional, Sequence, Set
+from typing import Dict, List, Optional, Set, Tuple
 
 import jsonlines
 import numpy as np
@@ -14,14 +15,16 @@ from ..utils import BaseProcessor
 
 
 class DiffStats(TypedDict):
-    id: int
+    repo: str
+    hash: str
     num_tokens: Optional[int]
     num_chars: Optional[int]
     num_mods: Optional[int]
 
 
 class MessageStats(TypedDict):
-    id: int
+    repo: str
+    hash: str
     num_tokens: Optional[int]
     num_chars: Optional[int]
 
@@ -64,14 +67,14 @@ class OutliersProcessor(BaseProcessor):
         diff_statistics: Optional[Set[str]] = None,
         message_statistics: Optional[Set[str]] = None,
     ):
-        super().__init__(chunksize=chunksize, n_workers=n_workers, data_format=data_format, logger_name=logger_name)
+        super().__init__(data_format=data_format, chunksize=chunksize, n_workers=n_workers, logger_name=logger_name)
         self._lower_percentile = lower_percentile
         self._upper_percentile = upper_percentile
         self._diff_upper_bound = diff_upper_bound
 
         self._diff_statistics = {"num_tokens", "num_chars", "num_mods"}
         if diff_statistics:
-            if any(given_stat not in self._diff_statistics for given_stat in diff_statistics):
+            if diff_statistics - self._diff_statistics:
                 raise ValueError(
                     f"Unexpected key for diff statistics. Only the following keys are allowed: "
                     f"{self._diff_statistics}"
@@ -80,14 +83,14 @@ class OutliersProcessor(BaseProcessor):
 
         self._message_statistics = {"num_tokens", "num_chars"}
         if message_statistics:
-            if any(given_stat not in self._message_statistics for given_stat in message_statistics):
+            if message_statistics - self._message_statistics:
                 raise ValueError(
                     f"Unexpected key for message statistics. Only the following keys are allowed: "
                     f"{self._message_statistics}"
                 )
             self._message_statistics = message_statistics
 
-        self._ids_to_drop: Set[int] = set()
+        self._commits_to_drop: Dict[str, Set[str]] = defaultdict(set)
         self._diff_percentiles: Dict[int, Dict[str, float]] = defaultdict(dict)
         self._message_percentiles: Dict[int, Dict[str, float]] = defaultdict(dict)
 
@@ -96,24 +99,22 @@ class OutliersProcessor(BaseProcessor):
         """Splits given string by whitespaces and returns # of tokens."""
         return len(string.split())
 
-    def _get_stats_msg(self, id: int, msg: str) -> MessageStats:
+    def _get_stats_msg(self, repo: str, hash: str, msg: str) -> MessageStats:
         """
-        Tokenizes given message and returns a string
-            with id and # of tokens separated by ',' with '\n' at the end.
+        Tokenizes given message and returns statistics.
         """
         try:
             num_tokens = OutliersProcessor._get_n_tokens_str(msg)
             num_chars = len(msg)
-        except (TypeError, AttributeError):
-            self.logger.error(f"TypeError when tokenizing message from id {id}; `{msg}`")
+        except (TypeError, AttributeError) as e:
+            self.logger.error(f"Error when tokenizing message from {(repo, hash)}: {e}`")
             num_tokens = None
             num_chars = None
-        return {"id": id, "num_tokens": num_tokens, "num_chars": num_chars}
+        return {"repo": repo, "hash": hash, "num_tokens": num_tokens, "num_chars": num_chars}
 
-    def _get_stats_mods(self, id: int, mods: List[Dict[str, str]]) -> DiffStats:
+    def _get_stats_mods(self, repo: str, hash: str, mods: List[Dict[str, str]]) -> DiffStats:
         """
-        Tokenizes each diff in commit modifications and returns a string
-             with id and # of tokens separated by ',' with '\n' at the end.
+        Tokenizes each diff in commit modifications and returns statistics.
         """
         try:
             num_tokens = 0
@@ -137,46 +138,51 @@ class OutliersProcessor(BaseProcessor):
                 num_tokens += OutliersProcessor._get_n_tokens_str(mod["diff"])
                 num_chars += len(file_diff)
                 num_chars += len(mod["diff"])
-        except (TypeError, AttributeError):
-            self.logger.error(f"TypeError when tokenizing mods from id {id}; `{mods}`")
+        except (TypeError, AttributeError) as e:
+            self.logger.error(f"Error when tokenizing mods from {(repo, hash)}: `{e}`")
             num_tokens = None
             num_chars = None
             num_mods = None
 
-        return {"id": id, "num_tokens": num_tokens, "num_chars": num_chars, "num_mods": num_mods}
+        return {"repo": repo, "hash": hash, "num_tokens": num_tokens, "num_chars": num_chars, "num_mods": num_mods}
 
-    def _get_stats(self, in_fname: str, stats_dir: str) -> None:
+    def _get_stats(self, input_dir: str, stats_dir: str) -> None:
         """Processes statistics of diffs and messages and saves to separate files.
 
         Args:
-            in_fname: Path to read input data from.
+            input_dir: Path to read input data from.
             stats_dir: Path to directory to save statistics to.
         """
-        self.logger.info(f"Starting processing stats from {in_fname}")
+        self.logger.info(f"Starting processing stats from {input_dir}")
 
         open(os.path.join(stats_dir, "stats_diff.jsonl"), "w").close()
         open(os.path.join(stats_dir, "stats_message.jsonl"), "w").close()
 
-        reader = self._read_input(in_fname)
-        for chunk in tqdm(reader, desc=f"Processing stats from {in_fname}", leave=False):
-            with Parallel(self._n_workers) as pool:
-                # calculate diffs stats from current chuck
-                diff_res: List[DiffStats] = pool(
-                    delayed(self._get_stats_mods)(item["id"], item["mods"])
-                    for _, item in chunk[["id", "mods"]].iterrows()
-                )
-                # calculate messages stats from current chuck
-                message_res: List[MessageStats] = pool(
-                    delayed(self._get_stats_msg)(item["id"], item["message"])
-                    for _, item in chunk[["id", "message"]].iterrows()
-                )
-            # append results from current chunk to target files
-            with jsonlines.open(os.path.join(stats_dir, "stats_diff.jsonl"), "a") as writer:
-                writer.write_all(diff_res)
-            with jsonlines.open(os.path.join(stats_dir, "stats_message.jsonl"), "a") as writer:
-                writer.write_all(message_res)
+        for repo in tqdm(sorted(os.listdir(input_dir)), desc=f"Processing {input_dir}"):
+            self.logger.info(f"Processing {repo}")
+            reader = self._data_manager.read_input(
+                os.path.join(input_dir, repo, f"commits.{self.data_format}.gz"),
+                compression="gzip",
+                add_data_format=False,
+                chunksize=self._chunksize,
+            )
+            for chunk in tqdm(reader, desc=f"Processing stats from {repo}", leave=False):
+                diff_res: List[DiffStats] = [
+                    self._get_stats_mods(repo=repo, hash=item["hash"], mods=item["mods"])
+                    for _, item in chunk[["hash", "mods"]].iterrows()
+                ]
+                message_res: List[MessageStats] = [
+                    self._get_stats_msg(repo=repo, hash=item["hash"], msg=item["message"])
+                    for _, item in chunk[["hash", "message"]].iterrows()
+                ]
 
-        self.logger.info(f"Finished processing # tokens in {in_fname}")
+                # append results from current chunk to target files
+                with jsonlines.open(os.path.join(stats_dir, "stats_diff.jsonl"), "a") as writer:
+                    writer.write_all(diff_res)
+                with jsonlines.open(os.path.join(stats_dir, "stats_message.jsonl"), "a") as writer:
+                    writer.write_all(message_res)
+
+        self.logger.info(f"Finished processing # tokens in {input_dir}")
 
     def _get_percentiles(self, stats_dir: str) -> None:
         """Calculates 1%, 5%, 90%, 95%, 99% percentiles of diffs and messages statistics.
@@ -184,28 +190,32 @@ class OutliersProcessor(BaseProcessor):
         Args:
             stats_dir: Path to directory to read statistics from.
         """
+        self.logger.info("Processing diff percentiles")
 
-        with jsonlines.open(os.path.join(stats_dir, "stats_diff.jsonl"), "r") as reader:
-            diffs_stats: List[DiffStats] = [
-                line for line in reader if all(value is not None for value in line.values())
-            ]
+        for key in self._diff_statistics:
+            assert key in ["num_tokens", "num_chars", "num_mods"]
 
-        with jsonlines.open(os.path.join(stats_dir, "stats_message.jsonl"), "r") as reader:
-            message_stats: List[MessageStats] = [
-                line for line in reader if all(value is not None for value in line.values())
-            ]
-
-        for p in [1, 5, 10, 25, 50, 75, 90, 95, 99]:
-            for key in self._diff_statistics:
-                assert key in ["num_tokens", "num_chars", "num_mods"]
-                self._diff_percentiles[p][key] = np.percentile([diff[key] for diff in diffs_stats], p)  # type: ignore[literal-required]
-
-            for key in self._message_statistics:
-                assert key in ["num_tokens", "num_chars"]
-                self._message_percentiles[p][key] = np.percentile([message[key] for message in message_stats], p)  # type: ignore[literal-required]
-
+            self.logger.info(f"Key {key}")
+            self.logger.info(f"Reading data")
+            with jsonlines.open(os.path.join(stats_dir, "stats_diff.jsonl"), "r") as reader:
+                diffs_stats: List[int] = [line[key] for line in reader if line[key] is not None]
+            for p in [5, 95]:
+                self.logger.info(f"Computing {p}% percentile")
+                self._diff_percentiles[p][key] = np.percentile([diff_stat for diff_stat in diffs_stats], p)
         with open(os.path.join(stats_dir, "diff.json"), "w") as file:
             json.dump(self._diff_percentiles, file)
+
+        self.logger.info("Processing message percentiles")
+        for key in self._message_statistics:
+            assert key in ["num_tokens", "num_chars"]
+
+            self.logger.info(f"Key {key}")
+            self.logger.info(f"Reading data")
+            with jsonlines.open(os.path.join(stats_dir, "stats_message.jsonl"), "r") as reader:
+                msg_stats: List[int] = [line[key] for line in reader if line[key] is not None]
+            for p in [5, 95]:
+                self.logger.info(f"Computing {p}% percentile")
+                self._message_percentiles[p][key] = np.percentile([msg_stat for msg_stat in msg_stats], p)
         with open(os.path.join(stats_dir, "message.json"), "w") as file:
             json.dump(self._message_percentiles, file)
 
@@ -239,12 +249,10 @@ class OutliersProcessor(BaseProcessor):
         Args:
             stats_dir: Path to directory to read statistics from.
         """
-        self._ids_to_drop = set()
+        self.logger.info("Aggregating ids to drop for diffs statistics")
 
         with jsonlines.open(os.path.join(stats_dir, "stats_diff.jsonl"), "r") as reader:
             for line in reader:
-                assert isinstance(line["id"], int)
-
                 for key in self._diff_statistics:
                     assert isinstance(line[key], int) or line[key] is None
 
@@ -256,11 +264,12 @@ class OutliersProcessor(BaseProcessor):
                         )
                         or (key == "num_tokens" and self._diff_upper_bound and line[key] > self._diff_upper_bound)
                     ):
-                        self._ids_to_drop.add(line["id"])
+                        self._commits_to_drop[line["repo"]].add(line["hash"])
+
+        self.logger.info("Aggregating ids to drop for messages statistics")
 
         with jsonlines.open(os.path.join(stats_dir, "stats_message.jsonl"), "r") as reader:
             for line in reader:
-                assert isinstance(line["id"], int)
 
                 for key in self._message_statistics:
                     assert isinstance(line[key], int) or line[key] is None
@@ -269,28 +278,32 @@ class OutliersProcessor(BaseProcessor):
                         line[key] < self._message_percentiles[self._lower_percentile][key]
                         or line[key] > self._message_percentiles[self._upper_percentile][key]
                     ):
-                        self._ids_to_drop.add(line["id"])
+                        self._commits_to_drop[line["repo"]].add(line["hash"])
 
-    def prepare(self, in_fname: str, stats_dir: str, percentile_dir: Optional[str] = None, **kwargs) -> None:  # type: ignore[override]
+    def prepare(self, input_dir: str, stats_dir: str, percentile_dir: str, use_cache: bool, part: str) -> None:
         """Processes various statistics of diffs and messages, calculates percentiles and aggregates set of outliers ids.
 
         Args:
-            in_fname: Path to read input data from.
-            stats_dir: Path to folder to save supplementary information (# tokens, # characters, # mods, percentiles).
+            input_dir: Path to read input data from.
+            stats_dir: Path to directory to save statistics to (# tokens, # characters, # mods, percentiles).
             percentile_dir: Path to directory with already computed percentiles. Optional. Use-case: dropping outliers
                 from val/test by percentiles calculated on train.
+            part: Name of current dataset part.
+            use_cache: True to use precomputed statistics and percentiles, False to recompute them.
         """
-        self._get_stats(in_fname=in_fname, stats_dir=stats_dir)
+        if not use_cache:
+            # calculate required statistics
+            self._get_stats(input_dir=input_dir, stats_dir=stats_dir)
+            # compute percentiles (when processing train)
+            if part == "train":
+                self._get_percentiles(stats_dir=stats_dir)
 
-        if percentile_dir:
+        else:
             # read precomputed percentiles (and ensure that percentiles are loaded as numbers, not as strings)
             self._read_percentiles(percentile_dir=percentile_dir)
-        else:
-            # compute percentiles
-            self._get_percentiles(stats_dir=stats_dir)
 
         self._get_ids_to_drop(stats_dir=stats_dir)
-        self.logger.info(f"Got {len(self._ids_to_drop)} outliers to drop")
+        self.logger.info(f"Got {len(self._commits_to_drop)} outliers to drop")
 
-    def process(self, chunk: pd.DataFrame, **kwargs) -> pd.DataFrame:
-        return chunk.loc[~chunk["id"].isin(self._ids_to_drop)]
+    def _process_chunk(self, chunk: pd.DataFrame, repo: str, **kwargs) -> pd.DataFrame:
+        return chunk.loc[[cur_hash not in self._commits_to_drop[repo] for cur_hash in chunk.hash]]

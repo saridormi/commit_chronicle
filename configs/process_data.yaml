@@ -1,5 +1,5 @@
 data_format: jsonl
-line_sep: "[NL]"
+line_sep: "\n"
 
 parts:
   - train
@@ -8,7 +8,7 @@ parts:
 
 outliers_processor:
   args:
-    chunksize: 256
+    chunksize: 64
     n_workers: 4
   lower_percentile: 5
   upper_percentile: 95
@@ -16,18 +16,18 @@ outliers_processor:
 message_processor:
   args:
     chunksize: 16000
-    n_workers: 16
+    n_workers: 4
   replace_patterns: false
 
 diff_processor:
   args:
     chunksize: 16000
-    n_workers: 16
+    n_workers: 4
 
 pre_deduplication_processor:
   args:
     chunksize: 1000
-    n_workers: 8
+    n_workers: 4
 
 post_deduplication_processor:
   args:
@@ -40,8 +40,8 @@ post_deduplication_processor:
 
 metadata_processor:
   args:
-    chunksize: 8000
-    n_workers: 16
+    chunksize: 1000
+    n_workers: 4
 
 paths:
   input_dir: extracted_data_jsonl

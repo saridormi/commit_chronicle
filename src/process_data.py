@@ -1,9 +1,9 @@
-import json
 import logging
 import os
 from typing import Dict, Tuple
 
 import hydra
+import jsonlines
 from hydra.utils import to_absolute_path
 from omegaconf import DictConfig
 
@@ -27,10 +27,6 @@ def main(cfg: DictConfig) -> None:
     logging.info(cfg)
 
     parts = cfg.parts
-    if parts[0] != "train":
-        raise ValueError(
-            "Some processing stages require the train part to be passed first (e.g. percentiles are computed on train and then used for other parts). Please make sure that first part name that you pass is equal to `train`"
-        )
 
     # ---------------------------------
     # -         drop outliers         -
@@ -45,18 +41,18 @@ def main(cfg: DictConfig) -> None:
             upper_percentile=cfg.outliers_processor.upper_percentile,
         )
         for part in parts:
-            logging.info(f"Dropping outliers from {part}")
-
-            percentile_dir = None
-            if part != "train":
-                percentile_dir = os.path.join(cfg.paths.stats_percentile_dir, "train")
             os.makedirs(os.path.join(cfg.paths.stats_percentile_dir, part), exist_ok=True)
-
+            processor.prepare(
+                input_dir=os.path.join(cfg.paths.input_dir, "raw", part),
+                stats_dir=os.path.join(cfg.paths.stats_percentile_dir, part),
+                percentile_dir=os.path.join(cfg.paths.stats_percentile_dir, "train"),
+                use_cache=(part != "test"),
+                part=part,
+            )
             processor(
-                in_fname=os.path.join(cfg.paths.input_dir, part),
-                out_fname=os.path.join(cfg.paths.input_dir, "filtered_outliers", part),
-                prepare_stats_dir=os.path.join(cfg.paths.stats_percentile_dir, part),
-                prepare_percentile_dir=percentile_dir,
+                input_dir=os.path.join(cfg.paths.input_dir, "raw", part),
+                output_dir=os.path.join(cfg.paths.input_dir, "filtered_outliers", part),
+                part=part,
             )
 
     # -----------------------------------
@@ -64,34 +60,32 @@ def main(cfg: DictConfig) -> None:
     # -----------------------------------
     if cfg.message_processor:
         os.makedirs(os.path.join(cfg.paths.input_dir, "filtered_msgs"), exist_ok=True)
+        message_processor = MessageProcessor(
+            **cfg.message_processor.args, data_format=cfg.data_format, logger_name="message_processor"
+        )
         for part in parts:
-            message_processor = MessageProcessor(
-                **cfg.message_processor.args, data_format=cfg.data_format, logger_name="message_processor"
-            )
             message_processor(
-                in_fname=os.path.join(
-                    cfg.paths.input_dir,
-                    "filtered_outliers",
-                    part,
-                ),
-                out_fname=os.path.join(cfg.paths.input_dir, "filtered_msgs", part),
+                input_dir=os.path.join(cfg.paths.input_dir, "filtered_outliers", part),
+                output_dir=os.path.join(cfg.paths.input_dir, "filtered_msgs", part),
                 line_sep=cfg.line_sep,
+                part=part,
                 replace_patterns=cfg.message_processor.replace_patterns,
             )
 
-    # ---------------------------------------
-    # - filter diffs – drop unchanged lines -
-    # ---------------------------------------
+    # -----------------------------------
+    # -           filter diffs          -
+    # -----------------------------------
     if cfg.diff_processor:
         os.makedirs(os.path.join(cfg.paths.input_dir, "filtered_diffs"), exist_ok=True)
+        diff_processor = DiffProcessor(
+            **cfg.diff_processor.args, data_format=cfg.data_format, logger_name="diff_processor"
+        )
         for part in parts:
-            diff_processor = DiffProcessor(
-                **cfg.diff_processor.args, data_format=cfg.data_format, logger_name="diff_processor"
-            )
             diff_processor(
-                in_fname=os.path.join(cfg.paths.input_dir, "filtered_msgs", part),
-                out_fname=os.path.join(cfg.paths.input_dir, "filtered_diffs", part),
+                input_dir=os.path.join(cfg.paths.input_dir, "filtered_msgs", part),
+                output_dir=os.path.join(cfg.paths.input_dir, "filtered_diffs", part),
                 line_sep=cfg.line_sep,
+                part=part,
             )
 
     # -------------------------------------------
@@ -108,59 +102,50 @@ def main(cfg: DictConfig) -> None:
         for part_id, part in enumerate(parts):
             logging.info(f"Processing messages from {part} into SourcererCC format")
             pre_d_processor(
-                in_fname=os.path.join(cfg.paths.input_dir, "filtered_diffs", part),
-                out_fname=os.path.join(cfg.paths.deduplication_dir, "raw", f"{part}_message.txt"),
-                data_col="message",
+                input_dir=os.path.join(cfg.paths.input_dir, "filtered_diffs", part),
+                diff_fname=os.path.join(cfg.paths.deduplication_dir, "raw", f"{part}_diffs.txt"),
+                message_fname=os.path.join(cfg.paths.deduplication_dir, "raw", f"{part}_messages.txt"),
                 project_id=part_id + 1,
-                add_data_format=False,
+                part=part,
             )
 
-            logging.info(f"Processing diffs from {part} into SourcererCC format")
-            pre_d_processor(
-                in_fname=os.path.join(cfg.paths.input_dir, "filtered_diffs", part),
-                out_fname=os.path.join(cfg.paths.deduplication_dir, "raw", f"{part}_diff.txt"),
-                data_col="mods",
-                project_id=part_id + 1,
-                add_data_format=False,
-            )
-        pre_d_processor.save_map(os.path.join(cfg.paths.metadata_dir, "ids_map.json"))
+        pre_d_processor.save_map(os.path.join(cfg.paths.metadata_dir, "commits_map.jsonl"))
 
     # ----------------------------
     # -       drop clones        -
     # ----------------------------
     if cfg.post_deduplication_processor:
         # load id mapping
-        # maps surrogate id used for clone search to real ids
-        with open(os.path.join(cfg.paths.metadata_dir, "ids_map.json"), "r") as f:
-            clones_ids_map: Dict[int, int] = {
-                int(value): int(key.split("[SEP]")[1]) for key, value in json.load(f).items()
+        with jsonlines.open(os.path.join(cfg.paths.metadata_dir, "commits_map.jsonl"), "r") as reader:
+            ids_to_commits_map: Dict[int, Dict[str, str]] = {
+                line["id"]: {"repo": line["repo"], "hash": line["hash"]} for line in reader
             }
 
         for part_id, part in enumerate(parts):
             post_d_processor = PostDeduplicationProcessor(
                 **cfg.post_deduplication_processor.args,
-                ids_map=clones_ids_map,
+                ids_to_commits_map=ids_to_commits_map,
                 data_format=cfg.data_format,
                 logger_name="postdedupl_processor",
             )
-
-            post_d_processor(
-                in_fname=os.path.join(cfg.paths.input_dir, "filtered_diffs", part),
-                out_fname=os.path.join(cfg.paths.input_dir, "filtered_diffs", f"{part}_no_duplicates"),
-                prepare_inner_part_id=part_id + 1,
-                prepare_outer_part_ids=[el + 1 for el, _ in enumerate(parts) if el != part_id],
-                prepare_diff_clones_fname=os.path.join(cfg.paths.deduplication_dir, "results_diffs_2023_80_new.pairs"),
-                prepare_msg_clones_fname=os.path.join(
-                    cfg.paths.deduplication_dir, "results_messages_2023_80_new.pairs"
-                ),
-                prepare_only_full_inner_clones=cfg.post_deduplication_processor.only_full_inner_clones,
-                prepare_identical_clones=cfg.post_deduplication_processor.identical_clones,
-                prepare_process_inner_clones=(
+            post_d_processor.prepare(
+                inner_part_id=part_id + 1,
+                outer_part_ids=[el + 1 for el, _ in enumerate(parts) if el != part_id],
+                diff_clones_fname=os.path.join(cfg.paths.deduplication_dir, "results_diffs_2023_80_new.pairs"),
+                msg_clones_fname=os.path.join(cfg.paths.deduplication_dir, "results_messages_2023_80_new.pairs"),
+                only_full_inner_clones=cfg.post_deduplication_processor.only_full_inner_clones,
+                identical_clones=cfg.post_deduplication_processor.identical_clones,
+                process_inner_clones=(
                     part == "train" if cfg.post_deduplication_processor.only_train_inner_clones else True
                 ),
-                prepare_process_outer_clones=(
+                process_outer_clones=(
                     part == "train" if cfg.post_deduplication_processor.only_train_outer_clones else True
                 ),
+            )
+            post_d_processor(
+                input_dir=os.path.join(cfg.paths.input_dir, "filtered_diffs", part),
+                output_dir=os.path.join(cfg.paths.input_dir, "no_duplicates", part),
+                part=part,
             )
 
     # ---------------------------
@@ -168,34 +153,34 @@ def main(cfg: DictConfig) -> None:
     # ---------------------------
     if cfg.metadata_processor:
         # load id mapping
-        # maps surrogate id used for clone search to real ids
-        with open(os.path.join(cfg.paths.metadata_dir, "ids_map.json"), "r") as f:
-            metadata_ids_map: Dict[int, Tuple[int, int]] = {
-                int(value): (int(key.split("[SEP]")[0]), int(key.split("[SEP]")[1]))
-                for key, value in json.load(f).items()
+        with jsonlines.open(os.path.join(cfg.paths.metadata_dir, "commits_map.jsonl"), "r") as reader:
+            ids_to_commits_map: Dict[int, Dict[str, str]] = {  # type: ignore[no-redef]
+                line["id"]: {"repo": line["repo"], "hash": line["hash"]} for line in reader
             }
 
         metadata_processor = MetadataProcessor(
             **cfg.metadata_processor.args,
             data_format=cfg.data_format,
             logger_name="final_processor",
-            ids_map=metadata_ids_map,
+            ids_to_commits_map=ids_to_commits_map,
         )
         for i, part in enumerate(parts):
             logging.info(f"Converting authors in {part}")
-
+            if i == 0:
+                metadata_processor.prepare(
+                    input_dir=os.path.join(cfg.paths.input_dir, "no_duplicates"),
+                    parts=parts,
+                    authors_map_fname=os.path.join(cfg.paths.metadata_dir, "authors_map.jsonl"),
+                    known_bots_fname=os.path.join(cfg.paths.metadata_dir, "bots.jsonl"),
+                    repos_metadata_fname=os.path.join(cfg.paths.metadata_dir, "filtered_ghs_results_25_jan_2023.jsonl"),
+                    diff_fname=os.path.join(cfg.paths.deduplication_dir, "raw", "res_diffs.txt"),
+                    message_fname=os.path.join(cfg.paths.deduplication_dir, "raw", "res_messages.txt"),
+                )
             metadata_processor(
-                in_fname=os.path.join(cfg.paths.input_dir, "filtered_diffs", f"{part}_no_duplicates"),
-                out_fname=os.path.join(cfg.paths.input_dir, "filtered_diffs", f"{part}_final"),
+                input_dir=os.path.join(cfg.paths.input_dir, "no_duplicates", part),
+                output_dir=os.path.join(cfg.paths.input_dir, "final", part),
+                part=part,
                 part_id=i + 1,
-                prepare_in_fnames=[os.path.join(cfg.paths.input_dir, "filtered_diffs", part) for part in parts],
-                prepare_authors_map_fname=os.path.join(cfg.paths.metadata_dir, "authors_map.jsonl"),
-                prepare_known_bots_fname=os.path.join(cfg.paths.metadata_dir, "bots.jsonl"),
-                prepare_repos_metadata_fname=os.path.join(cfg.paths.metadata_dir, "ghs.csv"),
-                prepare_part_id=i + 1,
-                prepare_diff_fname=os.path.join(cfg.paths.deduplication_dir, "raw", "res_diff.txt"),
-                prepare_message_fname=os.path.join(cfg.paths.deduplication_dir, "raw", "res_message.txt"),
-                prepare_is_ready=i > 0,
             )
 
 

@@ -6,7 +6,9 @@ from src.utils import CloneGroup
 
 @pytest.fixture
 def default_processor():
-    return PostDeduplicationProcessor(data_format="jsonl")
+    return PostDeduplicationProcessor(
+        data_format="jsonl", ids_to_commits_map={i: {"repo": f"repo{i}", "hash": f"hash{i}"} for i in range(1000)}
+    )
 
 
 def test_get_outer_clones(default_processor, tmp_path):
@@ -161,7 +163,7 @@ def test_get_outer_ids_to_drop(default_processor, tmp_path):
         outer_part_ids=[2],
     )
 
-    assert default_processor._outer_clones_to_drop == {2, 3, 4, 5, 6, 7}
+    assert default_processor._outer_clones_to_drop == {f"repo{i}": {f"hash{i}"} for i in [2, 3, 4, 5, 6, 7]}
 
 
 def test_get_inner_ids_to_drop_identical(default_processor, tmp_path):
@@ -203,16 +205,19 @@ def test_get_inner_ids_to_drop_identical(default_processor, tmp_path):
     )
 
     assert default_processor._inner_clones_to_drop == {
-        1,
-        2,
-        3,
-        5,
-        6,
-        7,
-        8,  # message clones
-        9,
-        10,
-        11,  # diff clones
+        f"repo{i}": {f"hash{i}"}
+        for i in [
+            1,
+            2,
+            3,
+            5,
+            6,
+            7,
+            8,  # message clones
+            9,
+            10,
+            11,  # diff clones
+        ]
     }
 
 
@@ -259,7 +264,7 @@ def test_get_inner_ids_to_drop_identical_only_full(default_processor, tmp_path):
         identical_clones=True,
     )
 
-    assert default_processor._inner_clones_to_drop == {2, 3}
+    assert default_processor._inner_clones_to_drop == {"repo2": {"hash2"}, "repo3": {"hash3"}}
 
 
 def test_get_inner_ids_to_drop_identical_only_full_no_full_clones(default_processor, tmp_path):
@@ -300,7 +305,7 @@ def test_get_inner_ids_to_drop_identical_only_full_no_full_clones(default_proces
         identical_clones=True,
     )
 
-    assert default_processor._inner_clones_to_drop == set()
+    assert default_processor._inner_clones_to_drop == {}
 
 
 def test_get_inner_ids_to_drop_similar(default_processor, tmp_path):
@@ -337,7 +342,7 @@ def test_get_inner_ids_to_drop_similar(default_processor, tmp_path):
         identical_clones=False,
     )
 
-    assert default_processor._inner_clones_to_drop == {2, 3, 5, 6, 7, 8, 9, 10, 11}  # message clones  # diff clones
+    assert default_processor._inner_clones_to_drop == {f"repo{i}": {f"hash{i}"} for i in [2, 3, 5, 6, 7, 8, 9, 10, 11]}
 
 
 def test_get_inner_ids_to_drop_similar_only_full(default_processor, tmp_path):
@@ -376,7 +381,7 @@ def test_get_inner_ids_to_drop_similar_only_full(default_processor, tmp_path):
         identical_clones=False,
     )
 
-    assert default_processor._inner_clones_to_drop == {2, 3, 5}
+    assert default_processor._inner_clones_to_drop == {f"repo{i}": {f"hash{i}"} for i in [2, 3, 5]}
 
 
 def test_get_inner_ids_to_drop_similar_only_full_no_full_clones(default_processor, tmp_path):
@@ -413,4 +418,4 @@ def test_get_inner_ids_to_drop_similar_only_full_no_full_clones(default_processo
         identical_clones=False,
     )
 
-    assert default_processor._inner_clones_to_drop == set()
+    assert default_processor._inner_clones_to_drop == {}

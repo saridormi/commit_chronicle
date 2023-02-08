@@ -1,5 +1,5 @@
 data_format: jsonl
-n_workers: 16
+n_workers: 4
 
 parts:
   - train
@@ -7,7 +7,8 @@ parts:
   - test
 
 repo_processor:
-  chunksize: 1000
+  chunksize: 25
+  max_lines: 10000
 
 pydriller_kwargs:
   only_no_merge: true

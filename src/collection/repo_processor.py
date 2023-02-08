@@ -1,10 +1,9 @@
-import gzip
 import os
 from configparser import NoOptionError
-from typing import Any, Optional
+from typing import Optional
 
+from git import GitCommandError
 from pydriller import RepositoryMining
-from tqdm import tqdm
 
 from ..utils import JsonlManager, get_logger
 from .commit_processor import CommitProcessor
@@ -28,6 +27,7 @@ class RepoProcessor:
         chunksize: int,
         data_format: str,
         logger_name: Optional[str] = None,
+        max_lines: Optional[int] = None,
     ):
         if data_format == "jsonl":
             self._data_manager = JsonlManager()
@@ -37,6 +37,7 @@ class RepoProcessor:
         self._chunksize = chunksize
         self._logger_name = logger_name
 
+        self._max_lines = max_lines
         self._temp_clone_dir = temp_clone_dir
         self._output_dir = output_dir
 
@@ -54,6 +55,7 @@ class RepoProcessor:
         """
         output_dir = os.path.join(self._output_dir, repo_name)
         os.makedirs(output_dir, exist_ok=True)
+        os.makedirs(os.path.join(self._temp_clone_dir, repo_name), exist_ok=True)
         out_fname = os.path.join(output_dir, "commits")
 
         # sometimes I have to launch collection several times due to memory errors, so:
@@ -62,24 +64,31 @@ class RepoProcessor:
             return
 
         # 2. read already cloned repos from disk
-        if repo_url.split("/")[-1].replace(".git", "") in os.listdir(self._temp_clone_dir):
-            self.logger.debug(f"[{repo_name}] Already cloned")
-            repo = RepositoryMining(
-                f'{self._temp_clone_dir}/{repo_url.split("/")[-1].replace(".git", "")}', **repo_kwargs
-            )
+        cloned_repo_name = repo_url.split("/")[-1].replace(".git", "")
+        if cloned_repo_name in os.listdir(os.path.join(self._temp_clone_dir, repo_name)):
+            self.logger.info(f"[{repo_name}] Already cloned")
+            repo = RepositoryMining(f"{self._temp_clone_dir}/{repo_name}/{cloned_repo_name}", **repo_kwargs)
         else:
-            repo = RepositoryMining(repo_url, clone_repo_to=self._temp_clone_dir, **repo_kwargs)
+            repo = RepositoryMining(
+                repo_url, clone_repo_to=os.path.join(self._temp_clone_dir, repo_name), **repo_kwargs
+            )
 
         self.logger.info(f"[{repo_name}] Start processing")
         self._data_manager.prepare_outfile(out_fname)
 
         commits_data = []
+        total_num_commits = 0
         try:
             for commit in repo.traverse_commits():
                 try:
+                    if self._max_lines and commit.lines > self._max_lines:
+                        self.logger.warning(
+                            f"[{repo_name}] Skiping {commit.hash}, because it changed more than {self._max_lines} lines"
+                        )
+                        continue
                     cur_data = CommitProcessor.process_commit(commit)
-                except (AttributeError, NoOptionError) as e:
-                    self.logger.error(f"[{repo_name}] raised {e} when processing {commit.hash}")
+                except (AttributeError, NoOptionError):
+                    self.logger.exception(f"[{repo_name}] Caught exception when processing {commit.hash}")
                     continue
 
                 commits_data.append(cur_data)
@@ -87,56 +96,23 @@ class RepoProcessor:
                 if len(commits_data) >= self._chunksize:
                     self.logger.debug(f"[{repo_name}] Processed more than {self._chunksize} commits, writing to file")
                     self._data_manager.append_to_outfile(commits_data, out_fname)
+                    total_num_commits += len(commits_data)
                     commits_data = []
-        except Exception as e:  # sometimes random errors can happen during cloning (e.g. if repo was deleted)
-            self.logger.error(f"[{repo_name}] Couldn't clone: raised exception {e}  (url: {repo_url})")
+
+        except GitCommandError:  # sometimes random errors can happen (e.g. if repo was deleted)
+            self.logger.exception(f"[{repo_name}] Caught exception when first traversing commits")
             return
 
         if len(commits_data) > 0:
             self.logger.debug(f"[{repo_name}] Final writing to file")
             self._data_manager.append_to_outfile(commits_data, out_fname)
+            total_num_commits += len(commits_data)
+
+        if total_num_commits == 0:
+            self.logger.warning(f"[{repo_name}] No commits were processed")
+        else:
+            self.logger.info(f"[{repo_name}] {total_num_commits} commits were processed")
 
         self.logger.debug(f"[{repo_name}] Zipping file")
-        with open(f"{out_fname}.{self.data_format}", "rb") as f_in, gzip.open(
-            f"{out_fname}.{self.data_format}.gz", "wb"
-        ) as f_out:
-            f_out.writelines(f_in)
-        os.remove(f"{out_fname}.{self.data_format}")
-
+        self._data_manager.zip_file(out_fname)
         self.logger.info(f"[{repo_name}] Finish processing")
-
-    def unite_files(self, out_fname: str, org_repo_sep: str) -> None:
-        """Unites separate repositories files, add unique ids, repositories names and licences types as features.
-
-        For faster data collection, initially commits from each repo are saved to its own file.
-
-        Args:
-            out_fname: Path to resulting single file.
-            org_repo_sep: Delimiter used instead of '/' in full repository name.
-        """
-        self._data_manager.prepare_outfile(out_fname)
-
-        cur_idx = 0
-        for repo_name in tqdm(os.listdir(self._output_dir), desc=f"Processing commits from each repo", leave=False):
-            # read data in chunks
-            reader = self._data_manager.read_input(
-                os.path.join(self._output_dir, repo_name, f"commits.{self.data_format}.gz"),
-                compression="gzip",
-                add_data_format=False,
-                chunksize=self._chunksize,
-            )
-            cur_len = 0
-            try:
-                for i, chunk in enumerate(reader):
-                    # aggregate № examples so that each example from every repo has an unique id
-                    chunk["id"] = chunk.index
-                    chunk["id"] += cur_idx
-                    chunk["repo"] = repo_name.replace(org_repo_sep, "/")
-
-                    self._data_manager.append_to_outfile(chunk, out_fname)
-
-                    cur_len += chunk.shape[0]
-
-                cur_idx += cur_len
-            except ValueError as e:
-                self.logger.error(f"[{repo_name}] Couldn't read; {e}")

@@ -1,44 +1,57 @@
+import os
 from typing import List, Optional
 
 import pandas as pd
 from tqdm import tqdm
 
-from ..utils import BaseProcessor
+from ..utils import JsonlManager, get_logger
 
 
-class DiffExtractor(BaseProcessor):
+class DiffExtractor:
     """This class is used to extract diffs from data to train tokenizer on."""
 
-    def process(self, chunk: pd.DataFrame, line_sep: str, **kwargs) -> List[str]:  # type: ignore[override]
+    def __init__(
+        self,
+        chunksize: int,
+        data_format: str,
+        logger_name: Optional[str] = None,
+    ):
+        if data_format == "jsonl":
+            self._data_manager = JsonlManager()
+        else:
+            raise ValueError("Given data format is not supported.")
+        self.data_format = data_format
+        self._chunksize = chunksize
+        self._logger_name = logger_name
+
+    @property
+    def logger(self):
+        return get_logger(self._logger_name)
+
+    def _extract_diffs(self, chunk: pd.DataFrame, line_sep: str) -> List[str]:
         chunk["diff"] = [line_sep.join([mod["diff"] for mod in commit]) + "\n" for commit in chunk["mods"].tolist()]
         return chunk["diff"].tolist()
 
-    def extract_diffs(self, in_fname: str, out_fname: str, line_sep: str, n_examples: Optional[int] = None) -> None:
+    def __call__(self, input_dir: str, out_fname: str, line_sep: str) -> None:
         """Extracts first `n_examples` diffs from input file and saves them to separate file.
         If `n_examples` is not given, extracts all diffs from input file.
         """
-        self.logger.info(f"Starting processing {in_fname}")
+        self._data_manager.prepare_outfile(out_fname, add_data_format=False)
 
-        self._prepare_outfile(out_fname, add_data_format=False)
+        repos = sorted(os.listdir(input_dir))
+        total_num_examples = 0
+        for repo in tqdm(repos, desc=f"Processing input directory"):
+            self.logger.info(f"[{repo}] Start processing")
 
-        if not n_examples:
-            reader = self._read_input(in_fname)
-            for chunk in tqdm(reader, leave=False):
-                processed_chunk = self.process(chunk, line_sep)
-                self._append_to_outfile(processed_chunk, out_fname)
-        else:
-            reader = self._read_input(in_fname)
-            n_processed_examples = 0
-            for chunk in tqdm(reader, leave=False):
+            reader = self._data_manager.read_input(
+                os.path.join(input_dir, repo, f"commits.{self.data_format}.gz"),
+                compression="gzip",
+                add_data_format=False,
+                chunksize=self._chunksize,
+            )
 
-                if n_processed_examples + len(chunk) > n_examples:
-                    chunk = chunk[: n_examples - n_processed_examples]
+            for chunk in tqdm(reader, desc=f"Iterating over {repo}", leave=False):
+                diffs: List[str] = self._extract_diffs(chunk, line_sep=line_sep)
+                self._data_manager.append_to_outfile(data=diffs, out_fname=out_fname, add_data_format=False)
 
-                processed_chunk = self.process(chunk, line_sep)
-                self._append_to_outfile(processed_chunk, out_fname)
-
-                n_processed_examples += len(chunk)
-                if n_processed_examples >= n_examples:
-                    break
-
-        self.logger.info(f"Finished processing {in_fname}")
+            self.logger.info(f"[{repo}] Finish processing")

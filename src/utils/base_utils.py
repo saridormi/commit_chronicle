@@ -1,9 +1,12 @@
+import gzip
 import logging
+import os
 from abc import ABC, abstractmethod
 from typing import Dict, List, Optional, Union
 
 import jsonlines
 import pandas as pd
+from joblib import Parallel, delayed
 from tqdm import tqdm
 
 
@@ -11,6 +14,10 @@ class BaseManager(ABC):
     """
     This is a base class for writing & reading data.
     """
+
+    @abstractmethod
+    def zip_file(self, out_fname: str, add_data_format: Optional[bool] = True):
+        pass
 
     @abstractmethod
     def prepare_outfile(self, out_fname: str, add_data_format: Optional[bool] = True) -> None:
@@ -42,6 +49,16 @@ class JsonlManager(BaseManager):
     This is a class for writing & reading jsonl data.
     """
 
+    def zip_file(self, out_fname: str, add_data_format: Optional[bool] = True):
+        """
+        Uses gzip to compress target file.
+        """
+        if add_data_format:
+            out_fname += ".jsonl"
+        with open(out_fname, "rb") as f_in, gzip.open(f"{out_fname}.gz", "wb") as f_out:
+            f_out.writelines(f_in)
+        os.remove(out_fname)
+
     def prepare_outfile(self, out_fname: str, add_data_format: Optional[bool] = True) -> None:
         """
         Clears target file.
@@ -60,11 +77,13 @@ class JsonlManager(BaseManager):
         """
         Appends current data chunk.
         """
-        if isinstance(data, pd.DataFrame):
+        if isinstance(data, list) and all(isinstance(d, str) for d in data):
+            with open(out_fname, mode="a") as f:
+                f.writelines(data)  # type: ignore[arg-type]
+            return
+        elif isinstance(data, pd.DataFrame):
             data = data.to_dict(orient="records")
-        if isinstance(data, list) and all(isinstance(d, dict) for d in data):
-            pass
-        elif isinstance(data, list) and all(isinstance(d, str) for d in data):
+        elif isinstance(data, list) and all(isinstance(d, dict) for d in data):
             pass
         else:
             raise ValueError(
@@ -161,52 +180,77 @@ class BaseProcessor(ABC):
             in_fname, add_data_format=add_data_format, chunksize=None if read_whole else self._chunksize, **kwargs
         )
 
-    def prepare(self, in_fname: str, **kwargs) -> None:
-        """
-        Performs any necessary actions before data processing begins.
-
-        Args:
-            in_fname: Path to read input data from.
-            **kwargs: Arbitrary keyword arguments.
-        """
-        pass
-
     @abstractmethod
-    def process(self, chunk: pd.DataFrame, **kwargs) -> Union[pd.DataFrame, List[str]]:
+    def _process_chunk(self, chunk: pd.DataFrame, repo: str, **kwargs) -> pd.DataFrame:
         """
-        Implements chunk processing logic.
+        Implements single chunk processing logic.
 
         Args:
-            chunk: Small subset of original dataset.
+            chunk: Dataframe with commits, a subset of possibly huge file. Its size is defined by `_chunksize` field.
+            repo: Name of current repository.
             **kwargs: Arbitrary keyword arguments.
+
+        Note:
+            `repo` is a directory name, so it's not a `org/name` structure from GitHub, but rather `org#repo`.
 
         Returns:
-            List of strings in cases when only one column is necessary for further processing. In other cases, `pd.DataFrame`.
+            Processed chunk.
         """
         pass
 
-    def __call__(self, in_fname: str, out_fname: str, add_data_format: Optional[bool] = True, **kwargs) -> None:
+    def _process_repo(self, input_dir: str, output_dir: str, repo: str, part: str, **kwargs) -> None:
         """
-        Iterates over input data in chunks, processes it in some way and saves results to separate file.
+        Implements single repo processing logic:
+         * iterate over repo commits in chunks
+         * do something meaningful to each chunk
+         * append processed chunk to file in repo-specific output directory
 
         Args:
-            in_fname: Path to read input data from.
-            out_fname: Path to save processed data to.
-            **kwargs: Arbitrary keyword arguments. Keyword arguments starting from prefix 'prepare_'
-                will be passed to method that is called before data processing,
-                all others - to method that processes each chunk.
+            input_dir: Path to root input directory with data.
+            output_dir: Path to root output directory with data.
+            repo: Name of current repository.
+            part: Name of current dataset part. Will be passed to `_process_chunk` method.
+            **kwargs: Arbitrary keyword arguments. Will be passed to `_process_chunk` method.
         """
-        prepare_kwargs = {key[len("prepare_") :]: value for key, value in kwargs.items() if key.startswith("prepare_")}
-        process_kwargs = {key: value for key, value in kwargs.items() if not key.startswith("prepare_")}
+        os.makedirs(os.path.join(output_dir, repo), exist_ok=True)
+        out_fname = os.path.join(output_dir, repo, "commits")
+        self._data_manager.prepare_outfile(out_fname)
 
-        self.logger.info(f"Starting processing {in_fname}")
+        self.logger.info(f"[{repo}] Start processing")
 
-        self._prepare_outfile(out_fname, add_data_format=add_data_format)
-        self.prepare(in_fname, **prepare_kwargs)
+        reader = self._data_manager.read_input(
+            os.path.join(input_dir, repo, f"commits.{self.data_format}.gz"),
+            compression="gzip",
+            add_data_format=False,
+            chunksize=self._chunksize,
+        )
 
-        reader = self._read_input(in_fname)
-        for chunk in tqdm(reader, leave=False):
-            processed_chunk = self.process(chunk, **process_kwargs)
-            self._append_to_outfile(processed_chunk, out_fname, add_data_format=add_data_format)
+        for chunk in tqdm(reader, desc=f"Processing {repo}", leave=False):
+            chunk = self._process_chunk(chunk, repo=repo, **kwargs)
+            self._data_manager.append_to_outfile(chunk, out_fname)
 
-        self.logger.info(f"Finished processing {in_fname}")
+        self.logger.debug(f"[{repo}] Zipping file")
+        self._data_manager.zip_file(out_fname)
+        self.logger.info(f"[{repo}] Finish processing")
+
+    def __call__(self, input_dir: str, output_dir: str, part: str, **kwargs) -> None:
+        """
+        Iterates over input data, processes commits from each repository independently,
+        saves results to separate directory.
+
+        Args:
+            input_dir: Path to root input directory with data.
+            output_dir: Path to root output directory with data.
+            part: Name of current dataset part. Will be passed to `_process_repo` method.
+            **kwargs: Arbitrary keyword arguments. Will be passed to `_process_repo` method.
+        Note:
+            input_dir and output_dir should already include `part` folder. E.g. if we have root directory data and we want to
+            process train, `input_dir` should be `data/train`
+        """
+        repos = sorted(os.listdir(input_dir))
+
+        with Parallel(self._n_workers) as pool:
+            pool(
+                delayed(self._process_repo)(input_dir=input_dir, output_dir=output_dir, part=part, repo=repo, **kwargs)
+                for repo in repos
+            )

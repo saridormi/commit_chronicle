@@ -39,7 +39,7 @@ def main(cfg: DictConfig) -> None:
         urls = [url.replace("git://", "https://") for url in repos_metadata["github_url"].tolist()]
 
         rp = RepoProcessor(
-            temp_clone_dir=cfg.paths.temp_clone_dir,
+            temp_clone_dir=os.path.join(cfg.paths.temp_clone_dir, part),
             output_dir=os.path.join(cfg.paths.output_dir, "raw", part),
             logger_name="repo_processor",
             data_format=cfg.data_format,
@@ -51,8 +51,6 @@ def main(cfg: DictConfig) -> None:
                 delayed(rp.process_repo)(repo_name=name, repo_url=url, **pydriller_kwargs)
                 for name, url in zip(names, urls)
             )
-
-        rp.unite_files(out_fname=os.path.join(cfg.paths.output_dir, part), org_repo_sep="#")
 
 
 if __name__ == "__main__":

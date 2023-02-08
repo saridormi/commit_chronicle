@@ -13,6 +13,7 @@ class PostDeduplicationProcessor(BaseProcessor):
 
     Args:
         data_format: In which format mined data is saved.
+        ids_to_commits_map: Mapping from surrogate ids to real commits (commit is represented as dict with keys `repo`, `hash`).
         chunksize: Number of examples to proccess at once (data is read in chunks). Optional, default value is 1000.
         n_workers: Maximum number of concurrently running jobs. Optional, default value is 1 (sequential execution).
         logger_name: Name of logger for this class. Optional, default value is None.
@@ -21,15 +22,15 @@ class PostDeduplicationProcessor(BaseProcessor):
     def __init__(
         self,
         data_format: str,
+        ids_to_commits_map: Dict[int, Dict[str, str]],
         chunksize: Optional[int] = None,
         n_workers: Optional[int] = None,
         logger_name: Optional[str] = None,
-        ids_map: Optional[Dict[int, int]] = None,
     ):
         super().__init__(chunksize=chunksize, n_workers=n_workers, data_format=data_format, logger_name=logger_name)
-        self._ids_map = ids_map
-        self._inner_clones_to_drop: Set[int] = set()
-        self._outer_clones_to_drop: Set[int] = set()
+        self._ids_to_commits_map = ids_to_commits_map
+        self._inner_clones_to_drop: Dict[str, Set[str]] = defaultdict(set)
+        self._outer_clones_to_drop: Dict[str, Set[str]] = defaultdict(set)
 
     def _get_outer_clones(
         self, clones_fname: str, inner_part_id: int, outer_part_ids: Sequence[int]
@@ -227,11 +228,17 @@ class PostDeduplicationProcessor(BaseProcessor):
 
         # drop all message clones from inner part
         for group in msg_clones:
-            self._outer_clones_to_drop.update(group.get_ids_to_drop(include_root=False, ids_map=self._ids_map))
+            ids_to_drop = group.get_ids_to_drop(include_root=False)
+            for idx in ids_to_drop:
+                commit = self._ids_to_commits_map[idx]
+                self._outer_clones_to_drop[commit["repo"]].add(commit["hash"])
 
         # drop all diffs clones from inner part
         for group in diff_clones:
-            self._outer_clones_to_drop.update(group.get_ids_to_drop(include_root=False, ids_map=self._ids_map))
+            ids_to_drop = group.get_ids_to_drop(include_root=False)
+            for idx in ids_to_drop:
+                commit = self._ids_to_commits_map[idx]
+                self._outer_clones_to_drop[commit["repo"]].add(commit["hash"])
 
     def _get_inner_ids_to_drop(
         self,
@@ -265,13 +272,22 @@ class PostDeduplicationProcessor(BaseProcessor):
             else:
                 full_clones = self._get_full_inner_clones_similar(msg_clones=msg_clones, diff_clones=diff_clones)
             for group in full_clones:
-                self._inner_clones_to_drop.update(group.get_ids_to_drop(ids_map=self._ids_map))
+                ids_to_drop = group.get_ids_to_drop()
+                for idx in ids_to_drop:
+                    commit = self._ids_to_commits_map[idx]
+                    self._inner_clones_to_drop[commit["repo"]].add(commit["hash"])
         else:
             for group in msg_clones:
-                self._inner_clones_to_drop.update(group.get_ids_to_drop(ids_map=self._ids_map))
+                ids_to_drop = group.get_ids_to_drop()
+                for idx in ids_to_drop:
+                    commit = self._ids_to_commits_map[idx]
+                    self._inner_clones_to_drop[commit["repo"]].add(commit["hash"])
 
             for group in diff_clones:
-                self._inner_clones_to_drop.update(group.get_ids_to_drop(ids_map=self._ids_map))
+                ids_to_drop = group.get_ids_to_drop()
+                for idx in ids_to_drop:
+                    commit = self._ids_to_commits_map[idx]
+                    self._inner_clones_to_drop[commit["repo"]].add(commit["hash"])
 
     def clones_report(self):
         self.logger.info(f"Will drop {len(self._outer_clones_to_drop)} outer clones\n")
@@ -279,7 +295,6 @@ class PostDeduplicationProcessor(BaseProcessor):
 
     def prepare(  # type: ignore[override]
         self,
-        in_fname: str,
         inner_part_id: int,
         outer_part_ids: Sequence[int],
         msg_clones_fname: str,
@@ -333,7 +348,11 @@ class PostDeduplicationProcessor(BaseProcessor):
 
         self.clones_report()
 
-    def process(self, chunk: pd.DataFrame, **kwargs) -> pd.DataFrame:
-        chunk = chunk.loc[~chunk["id"].isin(self._outer_clones_to_drop)]
-        chunk = chunk.loc[~chunk["id"].isin(self._inner_clones_to_drop)]
+    def _process_chunk(self, chunk: pd.DataFrame, repo: str, **kwargs) -> pd.DataFrame:
+        chunk = chunk.loc[
+            [
+                cur_hash not in self._inner_clones_to_drop[repo] and cur_hash not in self._outer_clones_to_drop[repo]
+                for cur_hash in chunk.hash
+            ]
+        ]
         return chunk
