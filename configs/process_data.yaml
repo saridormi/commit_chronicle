@@ -29,19 +29,26 @@ pre_deduplication_processor:
     chunksize: 1000
     n_workers: 4
 
+exact_hash_processor:
+  args:
+    chunksize: 10000
+    n_workers: 4
+  use_tokens_hash: false
+  use_cache: false
+
 post_deduplication_processor:
   args:
     chunksize: 16000
-    n_workers: 8
+    n_workers: 1
   only_full_inner_clones: false
   only_train_inner_clones: false
   only_train_outer_clones: true
-  identical_clones: false
+  identical_clones: true
 
 metadata_processor:
   args:
-    chunksize: 1000
-    n_workers: 4
+    chunksize: 16000
+    n_workers: 1
 
 paths:
   input_dir: extracted_data_jsonl

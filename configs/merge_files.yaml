@@ -1,0 +1,13 @@
+data_format: jsonl
+
+parts:
+  - train
+  - val
+  - test
+
+file_merger:
+  chunksize: 16000
+  input_stage: final
+
+paths:
+  input_dir: extracted_data_jsonl

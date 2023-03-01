@@ -1,4 +1,5 @@
 from .diff_processor import DiffProcessor
+from .exact_hash_processor import ExactHashProcessor
 from .message_processor import MessageProcessor
 from .metadata_processor import MetadataProcessor
 from .outliers_processor import OutliersProcessor
@@ -10,6 +11,7 @@ __all__ = [
     "OutliersProcessor",
     "PreDeduplicationProcessor",
     "PostDeduplicationProcessor",
+    "ExactHashProcessor",
     "MessageProcessor",
     "DiffProcessor",
 ]

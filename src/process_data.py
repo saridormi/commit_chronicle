@@ -9,6 +9,7 @@ from omegaconf import DictConfig
 
 from .processing import (
     DiffProcessor,
+    ExactHashProcessor,
     MessageProcessor,
     MetadataProcessor,
     OutliersProcessor,
@@ -46,7 +47,7 @@ def main(cfg: DictConfig) -> None:
                 input_dir=os.path.join(cfg.paths.input_dir, "raw", part),
                 stats_dir=os.path.join(cfg.paths.stats_percentile_dir, part),
                 percentile_dir=os.path.join(cfg.paths.stats_percentile_dir, "train"),
-                use_cache=(part != "test"),
+                use_cache=False,
                 part=part,
             )
             processor(
@@ -111,6 +112,34 @@ def main(cfg: DictConfig) -> None:
 
         pre_d_processor.save_map(os.path.join(cfg.paths.metadata_dir, "commits_map.jsonl"))
 
+    # -------------------------------------------
+    # - preprocess data into SourcererCC format -
+    # -------------------------------------------
+    if cfg.exact_hash_processor:
+        exact_hash_processor = ExactHashProcessor(
+            **cfg.exact_hash_processor.args,
+            data_format=cfg.data_format,
+            logger_name="exact_hash_processor",
+        )
+
+        logging.info(f"Searching for Exact Hash clones in messages")
+        exact_hash_processor(
+            data_type="messages",
+            deduplication_root=cfg.paths.deduplication_dir,
+            parts=cfg.parts,
+            use_cache=cfg.exact_hash_processor.use_cache,
+            use_tokens_hash=cfg.exact_hash_processor.use_tokens_hash,
+        )
+
+        logging.info(f"Searching for Exact Hash clones in diffs")
+        exact_hash_processor(
+            data_type="diffs",
+            deduplication_root=cfg.paths.deduplication_dir,
+            parts=cfg.parts,
+            use_cache=cfg.exact_hash_processor.use_cache,
+            use_tokens_hash=cfg.exact_hash_processor.use_tokens_hash,
+        )
+
     # ----------------------------
     # -       drop clones        -
     # ----------------------------
@@ -131,10 +160,15 @@ def main(cfg: DictConfig) -> None:
             post_d_processor.prepare(
                 inner_part_id=part_id + 1,
                 outer_part_ids=[el + 1 for el, _ in enumerate(parts) if el != part_id],
-                diff_clones_fname=os.path.join(cfg.paths.deduplication_dir, "results_diffs_2023_80_new.pairs"),
-                msg_clones_fname=os.path.join(cfg.paths.deduplication_dir, "results_messages_2023_80_new.pairs"),
+                diff_clones_fname=os.path.join(
+                    cfg.paths.deduplication_dir, "results_str", "exact_hash", "diffs", "results.jsonl"
+                ),
+                msg_clones_fname=os.path.join(
+                    cfg.paths.deduplication_dir, "results_str", "exact_hash", "messages", "results.jsonl"
+                ),
                 only_full_inner_clones=cfg.post_deduplication_processor.only_full_inner_clones,
                 identical_clones=cfg.post_deduplication_processor.identical_clones,
+                use_exact_hash=True,
                 process_inner_clones=(
                     part == "train" if cfg.post_deduplication_processor.only_train_inner_clones else True
                 ),
@@ -173,8 +207,7 @@ def main(cfg: DictConfig) -> None:
                     authors_map_fname=os.path.join(cfg.paths.metadata_dir, "authors_map.jsonl"),
                     known_bots_fname=os.path.join(cfg.paths.metadata_dir, "bots.jsonl"),
                     repos_metadata_fname=os.path.join(cfg.paths.metadata_dir, "filtered_ghs_results_25_jan_2023.jsonl"),
-                    diff_fname=os.path.join(cfg.paths.deduplication_dir, "raw", "res_diffs.txt"),
-                    message_fname=os.path.join(cfg.paths.deduplication_dir, "raw", "res_messages.txt"),
+                    deduplication_raw_dir=os.path.join(cfg.paths.deduplication_dir, "raw"),
                 )
             metadata_processor(
                 input_dir=os.path.join(cfg.paths.input_dir, "no_duplicates", part),

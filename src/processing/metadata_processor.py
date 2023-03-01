@@ -42,7 +42,7 @@ class MetadataProcessor(BaseProcessor):
         self._repo_language_map: Dict[str, str] = {}
         self._authors_repo_map: Dict[Tuple[str, str, str], int] = {}
 
-    def _get_short_examples(self, diff_fname: str, message_fname: str) -> None:
+    def _get_short_examples(self, root_dir: str, parts: List[str]) -> None:
         """
         Builds a set of extremely short examples (<= 1 unique token).
 
@@ -52,14 +52,19 @@ class MetadataProcessor(BaseProcessor):
             diff_fname: Path to diffs file for SourcererCC.
             message_fname: Path to messages file for SourcererCC.
         """
-        for fname in [diff_fname, message_fname]:
-            self.logger.info(f"Iterating over {fname} to get ids of short examples")
-            with open(fname, "r") as f:
-                for line in f:
-                    part_idx, idx, num_tokens, num_unique_tokens = (int(i) for i in line.strip().split(",")[:4])
-                    if num_unique_tokens <= 1:
-                        commit: Dict[str, str] = self._ids_to_commits_map[idx]
-                        self._short_examples_to_drop[commit["repo"]].add(commit["hash"])
+        for data_type in ["diffs", "messages"]:
+            for part in parts:
+                fname = os.path.join(root_dir, f"{part}_{data_type}.txt")
+                self.logger.info(f"Iterating over {fname} to get ids of short examples")
+                with open(fname, "r") as f:
+                    for line in f:
+                        part_idx, idx, num_tokens, num_unique_tokens = (int(i) for i in line.strip().split(",")[:4])
+                        if num_unique_tokens <= 1:
+                            commit: Dict[str, str] = self._ids_to_commits_map[idx]
+                            self._short_examples_to_drop[commit["repo"]].add(commit["hash"])
+        self.logger.info(
+            f"Number of short examples to drop: {sum(len(self._short_examples_to_drop[key]) for key in self._short_examples_to_drop)}"
+        )
 
     def _get_authors(self, input_dir: str, parts: List[str]) -> None:
         """Builds a set of authors from all given files.
@@ -71,7 +76,7 @@ class MetadataProcessor(BaseProcessor):
             repos = sorted(os.listdir(os.path.join(input_dir, part)))
             for repo in tqdm(repos, desc=f"Reading authors from {part}"):
                 reader = self._data_manager.read_input(
-                    os.path.join(input_dir, repo, f"commits.{self.data_format}.gz"),
+                    os.path.join(input_dir, part, repo, f"commits.{self.data_format}.gz"),
                     compression="gzip",
                     add_data_format=False,
                     chunksize=self._chunksize,
@@ -82,8 +87,11 @@ class MetadataProcessor(BaseProcessor):
                     assert all(len(author) == 2 for author in authors)
                     self._authors[part].update(tuple(author) for author in authors)  # type: ignore
 
-        self.logger.info(f"Total number of authors: {len(self._authors)}")
+            self.logger.info(f"Number of authors in {part}: {len(self._authors[part])}")
         self._train_authors_to_drop = self._authors["train"] & (self._authors["test"] | self._authors["val"])
+        self.logger.info(
+            f"Number of authors that are present both in train and val/test: {len(self._train_authors_to_drop)}"
+        )
 
     def _get_bot_authors(self, known_bots_fname: str) -> None:
         """Aggregates ids of bot authors. Two approaches to detect bots are used:
@@ -101,9 +109,12 @@ class MetadataProcessor(BaseProcessor):
         """
         assert self._authors
 
-        authors_df = pd.DataFrame(
-            [{"name": author[0], "login": author[0], "email": author[1]} for author in self._authors]
-        )
+        all_authors: List[Dict[str, str]] = []
+        for part in ["train", "val", "test"]:
+            all_authors.extend(
+                {"name": author[0], "login": author[0], "email": author[1]} for author in self._authors[part]
+            )
+        authors_df = pd.DataFrame(all_authors)
 
         # search for our authors in open bots datasets
         # our format is (name, email) from commits, name is compared both against `name` and against `login` fields
@@ -121,6 +132,7 @@ class MetadataProcessor(BaseProcessor):
 
         bot_authors = pd.concat([overlaps, suffixes], axis=0, ignore_index=True)
         self._bot_authors = set((row["name"], row["email"]) for _, row in bot_authors.iterrows())
+        self.logger.info(f"Number of bot authors: {len(self._bot_authors)}")
 
     def _get_authors_mapping(self, authors_map_fname: str) -> None:
         """Reads (author name, author email, repository) <-> (unique id) mapping from given file
@@ -151,8 +163,7 @@ class MetadataProcessor(BaseProcessor):
         authors_map_fname: str,
         known_bots_fname: str,
         repos_metadata_fname: str,
-        diff_fname: str,
-        message_fname: str,
+        deduplication_raw_dir: str,
     ) -> None:
         """
         Runs all necessary preprocessing to drop examples later.
@@ -163,14 +174,13 @@ class MetadataProcessor(BaseProcessor):
             authors_map_fname: Path to file with author <-> unique id mapping.
             known_bots_fname: Path to file with combination of open bots datasets.
             repos_metadata_fname: Path to file with repositories metadata.
-            diff_fname: Path to diffs file for SourcererCC.
-            message_fname: Path to messages file for SourcererCC.
+            deduplication_raw_dir: Path to root directory with preprocessed files for SourcererCC.
         """
         self._get_authors(input_dir=input_dir, parts=parts)
         self._get_bot_authors(known_bots_fname=known_bots_fname)
         self._get_authors_mapping(authors_map_fname=authors_map_fname)
         self._get_repo_metadata(repos_metadata_fname=repos_metadata_fname)
-        self._get_short_examples(diff_fname=diff_fname, message_fname=message_fname)
+        self._get_short_examples(root_dir=deduplication_raw_dir, parts=parts)
 
     def _process_chunk(self, chunk: pd.DataFrame, repo: str, part_id: int = -1, **kwargs) -> pd.DataFrame:
         if part_id == -1:
@@ -178,15 +188,14 @@ class MetadataProcessor(BaseProcessor):
         # drop short examples
         chunk = chunk.loc[[cur_hash not in self._short_examples_to_drop[repo] for cur_hash in chunk.hash]].copy()
         # add metadata about repositories
-        chunk["language"] = [self._repo_language_map[repo] for repo in chunk["repo"].tolist()]
-        chunk["license"] = [self._repo_license_map[repo] for repo in chunk["repo"].tolist()]
+        chunk["language"] = self._repo_language_map[repo.replace("#", "/")]
+        chunk["license"] = self._repo_license_map[repo.replace("#", "/")]
         # drop examples from bot authors
         chunk["author"] = chunk["author"].apply(tuple)
         chunk = chunk.loc[~chunk.author.isin(self._bot_authors)].copy()
+        # drop examples from train authors that are present in val/test
+        if part_id == 1:
+            chunk = chunk.loc[~chunk.author.isin(self._train_authors_to_drop)].copy()
         # convert authors to ids
-        chunk["author"] = [
-            self._authors_repo_map[(row["author"][0], row["author"][1], row["repo"])]
-            for _, row in chunk[["author", "repo"]].iterrows()
-        ]
-        chunk = chunk.loc[~chunk.author.isin(self._train_authors_to_drop)].copy()
+        chunk["author"] = [self._authors_repo_map[(author[0], author[1], repo)] for author in chunk.author]
         return chunk

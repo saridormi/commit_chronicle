@@ -1,3 +1,4 @@
+import os
 from collections import defaultdict
 from typing import Dict, List, Optional, Sequence, Set, Tuple
 
@@ -14,7 +15,7 @@ class PostDeduplicationProcessor(BaseProcessor):
     Args:
         data_format: In which format mined data is saved.
         ids_to_commits_map: Mapping from surrogate ids to real commits (commit is represented as dict with keys `repo`, `hash`).
-        chunksize: Number of examples to proccess at once (data is read in chunks). Optional, default value is 1000.
+        chunksize: Number of examples to process at once (data is read in chunks). Optional, default value is 1000.
         n_workers: Maximum number of concurrently running jobs. Optional, default value is 1 (sequential execution).
         logger_name: Name of logger for this class. Optional, default value is None.
     """
@@ -32,14 +33,49 @@ class PostDeduplicationProcessor(BaseProcessor):
         self._inner_clones_to_drop: Dict[str, Set[str]] = defaultdict(set)
         self._outer_clones_to_drop: Dict[str, Set[str]] = defaultdict(set)
 
-    def _get_outer_clones(
+    def _get_outer_clones_exact_hash(
         self, clones_fname: str, inner_part_id: int, outer_part_ids: Sequence[int]
     ) -> List[CloneGroup]:
-        """Processes clones between different dataset parts. One of parts is "inner", and the other parts are "outer".
-        Later, we want to drop clones only from "inner" part.
+        """Processes clones between different dataset parts. One of the parts is "inner", and the other parts are "outer".
+        Later, we want to drop clones only from the "inner" part.
 
         The primary use-case of this method is to find clones between train and val/test – we want to drop them
         from train.
+
+        This version expects clones to be already aggregated into disjoint clone groups and
+        stored in JSONLines with key "clones". It is supposed to be used with ExactHashProcessor output.
+
+        Args:
+            clones_fname: Part to file to read clones from.
+            inner_part_id: "Inner" dataset part: we intend to drop clones from this part.
+            outer_part_ids: Sequence of "outer" dataset parts: we do not intend to drop clones from these parts.
+
+        Returns:
+            A list of CloneGroup. In this case, clone groups are divided into a root and clones,
+              where root is the "outer" example and clones are its "inner" clones.
+        """
+        self.logger.info(f"Processing outer clones from {clones_fname}")
+        clones = pd.read_json(clones_fname, orient="records", lines=True)
+        outer_clone_groups = []
+        for clone_group in tqdm(clones.clones, desc=f"Processing outer clones for {inner_part_id}"):
+            inner_clones = set([tuple(clone) for clone in clone_group if clone[0] == inner_part_id])
+            outer_clones = [tuple(clone) for clone in clone_group if clone[0] in outer_part_ids]
+            for outer_clone in outer_clones:
+                outer_clone_groups.append(CloneGroup(clone_root=outer_clone, clones=inner_clones))  # type: ignore[arg-type]
+        return outer_clone_groups
+
+    def _get_outer_clones(
+        self, clones_fname: str, inner_part_id: int, outer_part_ids: Sequence[int]
+    ) -> List[CloneGroup]:
+        """Processes clones between different dataset parts. One of the parts is "inner", and the other parts are "outer".
+        Later, we want to drop clones only from the "inner" part.
+
+        The primary use-case of this method is to find clones between train and val/test – we want to drop them
+        from train.
+
+        This version expects clones to be stored in text file with pairs in format "{part_id1},{id1},{part_id2},{id2}".
+        It is supposed to be used with SourcererCC output. Note that it won't work for large-scale deduplication
+        (e.g. 700M clone pairs), as it loads everything into memory.
 
         Args:
             clones_fname: Part to file to read clones from.
@@ -74,9 +110,32 @@ class PostDeduplicationProcessor(BaseProcessor):
             for inner_examples, outer_ex in zip(outer_df.inner_examples, outer_df.outer_example)
         ]
 
+    def _get_inner_clones_identical_exact_hash(self, clones_fname: str, part_id: int) -> List[CloneGroup]:
+        """Processes clones coming from the same dataset part. This method is used only for 100% clones, and it relies
+        on the assumption that relation "being a clone" is transitive.
+
+        This version expects clones to be already aggregated into disjoint clone groups and
+        stored in JSONLines with key "clones". It is supposed to be used with ExactHashProcessor output.
+
+        Args:
+            clones_fname: Part to file to read clones from.
+            part_id: Which dataset part to process.
+        """
+        self.logger.info(f"Processing inner clones from {clones_fname} (part {part_id})")
+        clones_df = pd.read_json(clones_fname, orient="records", lines=True)
+        clone_groups: List[Set[Tuple[int, int]]] = [
+            set([tuple(example) for example in clone_group if example[0] == part_id])  # type: ignore[misc]
+            for clone_group in clones_df.clones.tolist()
+        ]
+        return [CloneGroup(clone_root=None, clones=clone_group) for clone_group in clone_groups if len(clone_group) > 1]
+
     def _get_inner_clones_identical(self, clones_fname: str, part_id: int) -> List[CloneGroup]:
         """Processes clones coming from the same dataset part. This method is used only for 100% clones, and it relies
         on the assumption that relation "being a clone" is transitive.
+
+        This version expects clones to be stored in text file with pairs in format "{part_id1},{id1},{part_id2},{id2}".
+        It is supposed to be used with SourcererCC output. Note that it won't work for large-scale deduplication
+        (e.g. 700M clone pairs), as it loads everything into memory.
 
         Args:
             clones_fname: Part to file to read clones from.
@@ -139,6 +198,10 @@ class PostDeduplicationProcessor(BaseProcessor):
     def _get_inner_clones_similar(self, clones_fname: str, part_id: int) -> List[CloneGroup]:
         """Processes clones coming from the same dataset part. This method is used for similar clones, and it doesn't
         rely on the assumption that relation "being a clone" is transitive.
+
+        This version expects clones to be stored in text file with pairs in format "{part_id1},{id1},{part_id2},{id2}".
+        It is supposed to be used with SourcererCC output. Note that it won't work for large-scale deduplication
+        (e.g. 700M clone pairs), as it loads everything into memory.
 
         Args:
             clones_fname: Part to file to read clones from.
@@ -207,7 +270,12 @@ class PostDeduplicationProcessor(BaseProcessor):
         return [g for g in full_clones if g]
 
     def _get_outer_ids_to_drop(
-        self, msg_clones_fname: str, diff_clones_fname: str, inner_part_id: int, outer_part_ids: Sequence[int]
+        self,
+        msg_clones_fname: str,
+        diff_clones_fname: str,
+        inner_part_id: int,
+        outer_part_ids: Sequence[int],
+        use_exact_hash: bool,
     ) -> None:
         """Aggregates ids of "inner" part (e.g. train) examples that are duplicate to "outer" parts (e.g. val/test) examples
         either in terms of messages or in terms of diffs.
@@ -217,14 +285,23 @@ class PostDeduplicationProcessor(BaseProcessor):
             diff_clones_fname: Part to file to read diff clones from.
             inner_part_id: "Inner" dataset part: we intend to drop clones from this part.
             outer_part_ids: Sequence of "outer" dataset parts: we do not intend to drop clones from these parts.
+            use_exact_hash: True to use logic for ExactHashProcessor output format, False - for SourcererCC.
         """
         # get outer clones by messages and by diffs
-        msg_clones = self._get_outer_clones(
-            msg_clones_fname, inner_part_id=inner_part_id, outer_part_ids=outer_part_ids
-        )
-        diff_clones = self._get_outer_clones(
-            diff_clones_fname, inner_part_id=inner_part_id, outer_part_ids=outer_part_ids
-        )
+        if use_exact_hash:
+            msg_clones = self._get_outer_clones_exact_hash(
+                msg_clones_fname, inner_part_id=inner_part_id, outer_part_ids=outer_part_ids
+            )
+            diff_clones = self._get_outer_clones_exact_hash(
+                diff_clones_fname, inner_part_id=inner_part_id, outer_part_ids=outer_part_ids
+            )
+        else:
+            msg_clones = self._get_outer_clones(
+                msg_clones_fname, inner_part_id=inner_part_id, outer_part_ids=outer_part_ids
+            )
+            diff_clones = self._get_outer_clones(
+                diff_clones_fname, inner_part_id=inner_part_id, outer_part_ids=outer_part_ids
+            )
 
         # drop all message clones from inner part
         for group in msg_clones:
@@ -247,6 +324,7 @@ class PostDeduplicationProcessor(BaseProcessor):
         inner_part_id: int,
         only_full_inner_clones: bool,
         identical_clones: bool,
+        use_exact_hash: bool,
     ) -> None:
         """Aggregates ids of duplicated examples inside specific dataset part (e.g. train).
 
@@ -257,11 +335,16 @@ class PostDeduplicationProcessor(BaseProcessor):
             only_full_inner_clones: True to drop only full clones, False to also drop partial clones
                 (clones only in terms of diffs or messages).
             identical_clones: True to use logic for 100% clones and False to use logic for similar clones.
+            use_exact_hash: True to use logic for ExactHashProcessor output format, False - for SourcererCC.
         """
         # obtain inner clones
         if identical_clones:
-            msg_clones = self._get_inner_clones_identical(msg_clones_fname, part_id=inner_part_id)
-            diff_clones = self._get_inner_clones_identical(diff_clones_fname, part_id=inner_part_id)
+            if use_exact_hash:
+                msg_clones = self._get_inner_clones_identical_exact_hash(msg_clones_fname, part_id=inner_part_id)
+                diff_clones = self._get_inner_clones_identical_exact_hash(diff_clones_fname, part_id=inner_part_id)
+            else:
+                msg_clones = self._get_inner_clones_identical(msg_clones_fname, part_id=inner_part_id)
+                diff_clones = self._get_inner_clones_identical(diff_clones_fname, part_id=inner_part_id)
         else:
             msg_clones = self._get_inner_clones_similar(msg_clones_fname, part_id=inner_part_id)
             diff_clones = self._get_inner_clones_similar(diff_clones_fname, part_id=inner_part_id)
@@ -290,8 +373,13 @@ class PostDeduplicationProcessor(BaseProcessor):
                     self._inner_clones_to_drop[commit["repo"]].add(commit["hash"])
 
     def clones_report(self):
-        self.logger.info(f"Will drop {len(self._outer_clones_to_drop)} outer clones\n")
-        self.logger.info(f"Will drop {len(self._inner_clones_to_drop)} inner clones\n")
+        self.logger.info("===== Clones Report =====")
+        self.logger.info(
+            f"Will drop {sum(len(self._outer_clones_to_drop[key]) for key in self._outer_clones_to_drop)} outer clones\n"
+        )
+        self.logger.info(
+            f"Will drop {sum(len(self._inner_clones_to_drop[key]) for key in self._inner_clones_to_drop)} inner clones\n"
+        )
 
     def prepare(  # type: ignore[override]
         self,
@@ -303,6 +391,7 @@ class PostDeduplicationProcessor(BaseProcessor):
         process_outer_clones: bool,
         only_full_inner_clones: bool,
         identical_clones: bool,
+        use_exact_hash: bool,
         is_ready: bool = False,
         **kwargs,
     ) -> None:
@@ -323,6 +412,7 @@ class PostDeduplicationProcessor(BaseProcessor):
             only_full_inner_clones: True to drop only full clones, False to also drop partial clones
                 (clones only in terms of diffs or messages).
             identical_clones: True to use logic for 100% clones and False to use logic for similar clones.
+            use_exact_hash: True to use logic for ExactHashProcessor output format, False - for SourcererCC.
             is_ready: A flag to indicate that clones ids are already built and are stored in `self._ids_to_drop`.
                 When it is set to True, this method doesn't do anything.
         """
@@ -337,6 +427,7 @@ class PostDeduplicationProcessor(BaseProcessor):
                 inner_part_id=inner_part_id,
                 only_full_inner_clones=only_full_inner_clones,
                 identical_clones=identical_clones,
+                use_exact_hash=use_exact_hash,
             )
         if process_outer_clones:
             self._get_outer_ids_to_drop(
@@ -344,15 +435,15 @@ class PostDeduplicationProcessor(BaseProcessor):
                 diff_clones_fname=diff_clones_fname,
                 inner_part_id=inner_part_id,
                 outer_part_ids=outer_part_ids,
+                use_exact_hash=use_exact_hash,
             )
 
         self.clones_report()
 
     def _process_chunk(self, chunk: pd.DataFrame, repo: str, **kwargs) -> pd.DataFrame:
-        chunk = chunk.loc[
+        return chunk.loc[
             [
                 cur_hash not in self._inner_clones_to_drop[repo] and cur_hash not in self._outer_clones_to_drop[repo]
                 for cur_hash in chunk.hash
             ]
         ]
-        return chunk

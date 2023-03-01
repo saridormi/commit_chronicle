@@ -249,8 +249,16 @@ class BaseProcessor(ABC):
         """
         repos = sorted(os.listdir(input_dir))
 
-        with Parallel(self._n_workers) as pool:
-            pool(
-                delayed(self._process_repo)(input_dir=input_dir, output_dir=output_dir, part=part, repo=repo, **kwargs)
-                for repo in repos
-            )
+        if self._n_workers == 1:
+            self.logger.info("Sequential execution")
+            for repo in tqdm(repos):
+                self._process_repo(input_dir=input_dir, output_dir=output_dir, part=part, repo=repo, **kwargs)
+        else:
+
+            with Parallel(self._n_workers) as pool:
+                pool(
+                    delayed(self._process_repo)(
+                        input_dir=input_dir, output_dir=output_dir, part=part, repo=repo, **kwargs
+                    )
+                    for repo in repos
+                )

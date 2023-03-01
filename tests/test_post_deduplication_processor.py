@@ -1,3 +1,6 @@
+import os
+
+import jsonlines
 import pytest
 
 from src.processing import PostDeduplicationProcessor
@@ -57,6 +60,23 @@ def test_get_inner_clones_identical(default_processor, tmp_path):
     assert inner_clones == [
         CloneGroup(clone_root=None, clones={(1, 6), (1, 7), (1, 8)}),
         CloneGroup(clone_root=None, clones={(1, 1), (1, 2), (1, 3), (1, 5)}),
+    ]
+
+
+def test_get_inner_clones_identical_exact_hash(default_processor, tmp_path):
+    clones = [
+        {"hash": "xxx", "clones": [[1, 1], [1, 2], [1, 3], [1, 5]]},
+        {"hash": "yyy", "clones": [[1, 6], [1, 7], [1, 8]]},
+        {"hash": "aaa", "clones": [[1, 9], [2, 6]]},
+        {"hash": "bbb", "clones": [[2, 9], [2, 5]]},
+    ]
+    clones_fname = tmp_path / "clones.jsonl"
+    with jsonlines.open(clones_fname, "w") as writer:
+        writer.write_all(clones)
+    inner_clones = default_processor._get_inner_clones_identical_exact_hash(str(clones_fname), part_id=1)
+    assert inner_clones == [
+        CloneGroup(clone_root=None, clones={(1, 1), (1, 2), (1, 3), (1, 5)}),
+        CloneGroup(clone_root=None, clones={(1, 6), (1, 7), (1, 8)}),
     ]
 
 
@@ -161,6 +181,7 @@ def test_get_outer_ids_to_drop(default_processor, tmp_path):
         msg_clones_fname=str(msg_clones_fname),
         inner_part_id=1,
         outer_part_ids=[2],
+        use_exact_hash=False,
     )
 
     assert default_processor._outer_clones_to_drop == {f"repo{i}": {f"hash{i}"} for i in [2, 3, 4, 5, 6, 7]}
@@ -202,6 +223,61 @@ def test_get_inner_ids_to_drop_identical(default_processor, tmp_path):
         inner_part_id=1,
         only_full_inner_clones=False,
         identical_clones=True,
+        use_exact_hash=False,
+    )
+
+    assert default_processor._inner_clones_to_drop == {
+        f"repo{i}": {f"hash{i}"}
+        for i in [
+            1,
+            2,
+            3,
+            5,
+            6,
+            7,
+            8,  # message clones
+            9,
+            10,
+            11,  # diff clones
+        ]
+    }
+
+
+def test_get_inner_ids_to_drop_identical_exact_hash(default_processor, tmp_path):
+    msg_clones_input = [
+        {"hash": "xxx", "clones": [[1, 1], [1, 2], [1, 3], [1, 5]]},
+        {"hash": "yyy", "clones": [[1, 6], [1, 7], [1, 8]]},
+        {"hash": "aaa", "clones": [[1, 9], [2, 6]]},
+        {"hash": "bbb", "clones": [[2, 9], [2, 5]]},
+    ]
+    msg_clones_fname = tmp_path / "msg_clones.jsonl"
+    with jsonlines.open(msg_clones_fname, "w") as writer:
+        writer.write_all(msg_clones_input)
+    msg_clones = default_processor._get_inner_clones_identical_exact_hash(str(msg_clones_fname), part_id=1)
+    assert msg_clones == [
+        CloneGroup(clone_root=None, clones={(1, 1), (1, 2), (1, 3), (1, 5)}),
+        CloneGroup(clone_root=None, clones={(1, 6), (1, 7), (1, 8)}),
+    ]
+
+    diff_clones_input = [
+        {"hash": "xxx", "clones": [[1, 9], [1, 10], [1, 11]]},
+    ]
+    diff_clones_fname = tmp_path / "diff_clones.txt"
+    with jsonlines.open(diff_clones_fname, "w") as writer:
+        writer.write_all(diff_clones_input)
+
+    diff_clones = default_processor._get_inner_clones_identical_exact_hash(str(diff_clones_fname), part_id=1)
+    assert diff_clones == [
+        CloneGroup(clone_root=None, clones={(1, 9), (1, 10), (1, 11)}),
+    ]
+
+    default_processor._get_inner_ids_to_drop(
+        msg_clones_fname=str(msg_clones_fname),
+        diff_clones_fname=str(diff_clones_fname),
+        inner_part_id=1,
+        only_full_inner_clones=False,
+        identical_clones=True,
+        use_exact_hash=True,
     )
 
     assert default_processor._inner_clones_to_drop == {
@@ -262,6 +338,7 @@ def test_get_inner_ids_to_drop_identical_only_full(default_processor, tmp_path):
         inner_part_id=1,
         only_full_inner_clones=True,
         identical_clones=True,
+        use_exact_hash=False,
     )
 
     assert default_processor._inner_clones_to_drop == {"repo2": {"hash2"}, "repo3": {"hash3"}}
@@ -303,6 +380,7 @@ def test_get_inner_ids_to_drop_identical_only_full_no_full_clones(default_proces
         inner_part_id=1,
         only_full_inner_clones=True,
         identical_clones=True,
+        use_exact_hash=False,
     )
 
     assert default_processor._inner_clones_to_drop == {}
@@ -340,6 +418,7 @@ def test_get_inner_ids_to_drop_similar(default_processor, tmp_path):
         inner_part_id=1,
         only_full_inner_clones=False,
         identical_clones=False,
+        use_exact_hash=False,
     )
 
     assert default_processor._inner_clones_to_drop == {f"repo{i}": {f"hash{i}"} for i in [2, 3, 5, 6, 7, 8, 9, 10, 11]}
@@ -379,6 +458,7 @@ def test_get_inner_ids_to_drop_similar_only_full(default_processor, tmp_path):
         inner_part_id=1,
         only_full_inner_clones=True,
         identical_clones=False,
+        use_exact_hash=False,
     )
 
     assert default_processor._inner_clones_to_drop == {f"repo{i}": {f"hash{i}"} for i in [2, 3, 5]}
@@ -416,6 +496,7 @@ def test_get_inner_ids_to_drop_similar_only_full_no_full_clones(default_processo
         inner_part_id=1,
         only_full_inner_clones=True,
         identical_clones=False,
+        use_exact_hash=False,
     )
 
     assert default_processor._inner_clones_to_drop == {}
